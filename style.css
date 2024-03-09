@@ -20,12 +20,25 @@ html, body {
 	    max-width:1080px;
 	}	
 }
+p {
+	margin:0px;
+	padding:0px;
+
+	@media (orientation: landscape) {
+		font-size:1rem;
+	}
+	@media (orientation: portrait) {
+    	font-size:2rem;
+	}	
+}
 .links {	
+	margin:3rem 0;
 	a {
 		color: #fc0;	
 		padding:0 0.5rem;
-		text-decoration:none;		
-		font-size:1.5rem;
+		text-decoration:none;				
+		}
+
 	}
 	a:hover {
 		color:#ADBFC1;
