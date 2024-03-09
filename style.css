@@ -7,23 +7,25 @@ html {
 body {
 	margin-bottom: 5em;
 }
-.album-cover {	
-	margin:1rem;
+html, body {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+.album-cover {		
 	width:100%;
 	@media (orientation: landscape) {
     	max-width:700px
 	}
 	@media (orientation: portrait) {
 	    max-width:1080px;
-	}
-	max-width:1080px;
+	}	
 }
 .links {	
 	a {
 		color: #fc0;	
 		padding:0 0.5rem;
-		text-decoration:none;
-		font-size:20px;		
+		text-decoration:none;		
+		font-size:1.5rem;
 	}
 	a:hover {
 		color:#ADBFC1;
