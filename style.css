@@ -1,0 +1,21 @@
+html {
+	text-align: center;
+	color:#888;
+	font-family: "arial";
+	background-color: black;
+}
+body {
+	margin-bottom: 5em;
+}
+.album-cover {
+	width:100%;
+	max-width: 800px;
+}
+.links {	
+	a {
+		color: #fc0;	
+		padding:0 0.5rem;
+	}
+	padding-top:2rem;
+	padding-bottom:2rem;
+}
