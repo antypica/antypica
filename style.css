@@ -17,6 +17,16 @@ html, body {
 	    max-width:1080px;
 	}
 }
+.link-list {
+	display:flex;
+	align-items:center;
+	justify-content:center;
+	a {
+		img {
+			width:2rem;
+		}
+	}
+}
 p {
 	margin-top:1.5rem;
 	margin-bottom:2rem;
