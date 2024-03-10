@@ -8,14 +8,18 @@ html, body {
     max-width: 100%;
     overflow-x: hidden;	
 }
-.album-cover {
-	width:100%;
+body, footer {
+	max-width:1080px;
+	margin: 0 auto;	
 	@media (orientation: landscape) {
     	max-width:700px
 	}
 	@media (orientation: portrait) {
 	    max-width:1080px;
 	}
+}
+footer {
+	margin-bottom:1rem;
 }
 .link-list {
 	display:flex;
