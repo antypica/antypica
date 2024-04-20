@@ -24,12 +24,12 @@ footer {
 .link-list {
 	display:flex;
 	align-items:center;
-	justify-content:center;
-	background-size: contain;
+	justify-content:center;	
 	a {
 		line-height:0;						
 		img {
 			width:2.25rem;
+			height:2.25rem;
 		}
 	}
 }
