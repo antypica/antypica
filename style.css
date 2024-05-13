@@ -21,6 +21,10 @@ body, footer {
 footer {
 	margin-bottom:1rem;
 }
+hr {
+	margin:1.5rem 0;
+	border-color: #666;
+}
 .link-list {
 	display:flex;
 	align-items:center;
