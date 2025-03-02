@@ -182,6 +182,8 @@
       const rect = canvasEl.getBoundingClientRect();
       if (e.touches && e.touches.length) {
         return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+      } else if (e.changedTouches && e.changedTouches.length) {
+        return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
       }
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
@@ -284,10 +286,14 @@
               onpointerdown: e => this.startMarquee(e),
               onpointermove: e => this.updateMarquee(e),
               onpointerup: e => this.endMarquee(e),
-              ontouchstart: e => { e.preventDefault(); this.startMarquee(e); },
-              ontouchmove: e => { e.preventDefault(); this.updateMarquee(e); },
-              ontouchend: e => { e.preventDefault(); this.endMarquee(e); },
-              onAttached: el => { this.canvasEl = el; this.initWorkers(); }
+              onAttached: el => {
+                this.canvasEl = el;
+                // Attach touch events with passive: false
+                el.addEventListener("touchstart", e => { e.preventDefault(); this.startMarquee(e); }, { passive: false });
+                el.addEventListener("touchmove", e => { e.preventDefault(); this.updateMarquee(e); }, { passive: false });
+                el.addEventListener("touchend", e => { e.preventDefault(); this.endMarquee(e); }, { passive: false });
+                this.initWorkers();
+              }
             }),
             canvas({
               id: "overlayCanvas",
