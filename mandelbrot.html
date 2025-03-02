@@ -2,8 +2,8 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <!-- Note the added viewport-fit=cover -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- Use the standard viewport tag -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mandelbrot Explorer</title>
   <style>
     html, body {
@@ -13,7 +13,8 @@
       overflow: hidden;
       font-family: "Helvetica Neue", Arial, sans-serif;
     }
-    #canvasContainer {
+    /* The #app container fills the viewport and holds the canvases and info box */
+    #app {
       position: relative;
       width: 100vw;
       height: 100vh;
@@ -23,7 +24,6 @@
       position: absolute;
       top: 0;
       left: 0;
-      display: block;
       width: 100%;
       height: 100%;
       cursor: crosshair;
@@ -31,12 +31,12 @@
     }
     #mainCanvas { z-index: 1; }
     #overlayCanvas { z-index: 2; pointer-events: none; }
+    /* The infoBox is overlaid on top of the canvases with a fixed offset */
     .infoBox {
       position: absolute;
-      /* Use the global safe-bottom variable */
-      bottom: calc(20px + var(--safe-bottom, 0px));
+      bottom: 20px;
       right: 20px;
-      padding: 10px;
+      padding: 10px;      
       border-radius: 4px;
       z-index: 1000;
     }
@@ -45,7 +45,7 @@
         right: auto;
         left: 50%;
         transform: translateX(-50%);
-        bottom: calc(20px + var(--safe-bottom, 0px));
+        bottom: 20px;
       }
     }
     .infoBox .title {
@@ -76,7 +76,6 @@
       border-color: rgba(255,255,255,1);
       background: rgba(70,70,70,0.8);
     }
-    /* New tip overlay style */
     .tipOverlay {
       position: absolute;
       top: 50%;
@@ -92,41 +91,16 @@
       border-radius: 4px;
     }
   </style>
-  <!-- Global safe-area inset script -->
-  <script>
-    (function updateSafeAreaInsets() {
-      function computeInsets() {
-        let safeTop = 0, safeBottom = 0, safeLeft = 0, safeRight = 0;
-        if (window.visualViewport) {
-          safeTop = window.visualViewport.offsetTop;
-          safeLeft = window.visualViewport.offsetLeft;
-          safeBottom = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
-          safeRight = window.innerWidth - window.visualViewport.width - window.visualViewport.offsetLeft;
-        }
-        document.documentElement.style.setProperty('--safe-top', safeTop + 'px');
-        document.documentElement.style.setProperty('--safe-bottom', safeBottom + 'px');
-        document.documentElement.style.setProperty('--safe-left', safeLeft + 'px');
-        document.documentElement.style.setProperty('--safe-right', safeRight + 'px');
-      }
-      computeInsets();
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', computeInsets);
-        window.visualViewport.addEventListener('scroll', computeInsets);
-      } else {
-        window.addEventListener('resize', computeInsets);
-      }
-    })();
-  </script>
 </head>
 <body>
+  <!-- The container for our app -->
   <div id="app"></div>
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
 
-    // Worker code stored in a constant string.
+    // Worker code stored in a string.
     const workerCode = `
       const LOG2 = Math.log(2);
-
       function mandelJS(cr, ci, maxIter) {
         let zr = 0, zi = 0, i = 0;
         const q = (cr - 0.25) ** 2 + ci ** 2;
@@ -145,7 +119,6 @@
           ? maxIter
           : i + 1 - (Math.log(Math.log(zr2 + zi2) / 2) / LOG2);
       }
-
       function smoothColor(smooth, maxIter, invColor) {
         const c = (smooth - maxIter) * invColor;
         return [
@@ -154,7 +127,6 @@
           Math.floor(255 * (0.5 - Math.cos(0.8 * c) / 2))
         ];
       }
-
       onmessage = e => {
         const { passId, startY, endY, width, height, scale, centerX, centerY, maxIter, colorChoice } = e.data;
         const invScale = 1 / scale;
@@ -185,13 +157,13 @@
       };
     `;
 
-    // Create a new worker from our code string.
+    // Create a new worker.
     function createWorker() {
       const blob = new Blob([workerCode], { type: "application/javascript" });
       return new Worker(URL.createObjectURL(blob));
     }
 
-    // Debounce helper to limit the rate of function calls.
+    // Debounce helper.
     function debounce(fn, ms) {
       let t;
       return function (...args) {
@@ -200,12 +172,12 @@
       };
     }
 
-    // Helper: clear a canvas context.
+    // Clear a canvas.
     function clearCanvas(canvasEl) {
       canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
     }
 
-    // Helper: unified pointer/touch event handler.
+    // Unified pointer/touch event handler.
     function getEventCoords(e, canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
       if (e.touches && e.touches.length) {
@@ -237,7 +209,7 @@
       urlLoaded = false;
       marqueeActive = false;
       marqueeStart = { x: 0, y: 0 };
-      marqueeCurrent = { x: 0, y: 0 };      
+      marqueeCurrent = { x: 0, y: 0 };
       tipState = "not_shown";
 
       constructor() {
@@ -245,8 +217,6 @@
         this.width = window.innerWidth;
         this.height = window.innerHeight;
         this.setLayoutDefaults();
-
-        // Load parameters from URL if available.
         const params = new URLSearchParams(window.location.search);
         if (params.has('x') && params.has('y') && params.has('z')) {
           this.centerX = parseFloat(params.get('x'));
@@ -283,7 +253,7 @@
           this.width = window.innerWidth;
           this.height = window.innerHeight;
           this.canvasEl.width = this.overlayCanvas.width = this.width;
-          this.canvasEl.height = this.overlayCanvas.height = this.height;          
+          this.canvasEl.height = this.overlayCanvas.height = this.height;
           this.setLayoutDefaults();
           this.computeFractal();
         }, 100));
@@ -305,40 +275,35 @@
 
       view() {
         return div(
+          canvas({
+            id: "mainCanvas",
+            width: this.width,
+            height: this.height,
+            onpointerdown: e => this.startMarquee(e),
+            onpointermove: e => this.updateMarquee(e),
+            onpointerup: e => this.endMarquee(e),
+            onAttached: el => {
+              this.canvasEl = el;
+              el.addEventListener("touchstart", e => { e.preventDefault(); this.startMarquee(e); }, { passive: false });
+              el.addEventListener("touchmove", e => { e.preventDefault(); this.updateMarquee(e); }, { passive: false });
+              el.addEventListener("touchend", e => { e.preventDefault(); this.endMarquee(e); }, { passive: false });
+              this.initWorkers();
+            }
+          }),
+          canvas({
+            id: "overlayCanvas",
+            width: this.width,
+            height: this.height,
+            onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
+          }),
+          this.tipState === "shown" ? div({ class: "tipOverlay" }, "click and drag to zoom") : undefined,
           div(
-            { id: "canvasContainer" },
-            canvas({
-              id: "mainCanvas",
-              width: this.width,
-              height: this.height,
-              onpointerdown: e => this.startMarquee(e),
-              onpointermove: e => this.updateMarquee(e),
-              onpointerup: e => this.endMarquee(e),
-              onAttached: el => {
-                this.canvasEl = el;
-                // Attach touch events with passive: false
-                el.addEventListener("touchstart", e => { e.preventDefault(); this.startMarquee(e); }, { passive: false });
-                el.addEventListener("touchmove", e => { e.preventDefault(); this.updateMarquee(e); }, { passive: false });
-                el.addEventListener("touchend", e => { e.preventDefault(); this.endMarquee(e); }, { passive: false });
-                this.initWorkers();
-              }
-            }),
-            canvas({
-              id: "overlayCanvas",
-              width: this.width,
-              height: this.height,
-              onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
-            }),
-            this.tipState === "shown" ? div({ class: "tipOverlay" }, "click and drag to zoom") : undefined,
-            div(
-              { class: "infoBox" },
-              h1({ class: "title" }, "Mandelbrot Explorer"),
-              div(
-                { class: "controls" },
-                button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out"),
-                button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
-                button({ class: "controlButton", onclick: () => this.saveImage() }, "Save")
-              )
+            { class: "infoBox" },
+            h1({ class: "title" }, "Mandelbrot Explorer"),
+            div({ class: "controls" },
+              button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out"),
+              button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
+              button({ class: "controlButton", onclick: () => this.saveImage() }, "Save")
             )
           )
         );
@@ -404,7 +369,6 @@
         this.marqueeActive = true;
         this.marqueeStart = { ...coords };
         this.marqueeCurrent = { ...coords };
-        // Use compositional update to show the tip.
         if (this.tipState === "not_shown") {
           this.update(() => { this.tipState = "shown"; });
         }
@@ -423,7 +387,7 @@
         const endCoords = getEventCoords(e, this.canvasEl);
         this.processMarquee(endCoords);
       }
-
+      
       drawMarquee() {
         const ctx = this.overlayCanvas.getContext("2d");
         clearCanvas(this.overlayCanvas);
@@ -438,7 +402,7 @@
         ctx.strokeRect(left, top, width, height);
         ctx.restore();
       }
-
+      
       processMarquee(end) {
         const left = Math.min(this.marqueeStart.x, end.x);
         const right = Math.max(this.marqueeStart.x, end.x);
@@ -446,12 +410,9 @@
         const bottom = Math.max(this.marqueeStart.y, end.y);
         const w = right - left, h = bottom - top;
         if (w < 5 || h < 5) return;
-        
-        // Dismiss the tip using compositional update.
         if (this.tipState === "shown") {
           this.update(() => { this.tipState = "dismissed"; });
         }
-        
         const oldScale = this.scale;
         const oldCenter = { x: this.centerX, y: this.centerY };
         const canvasCenter = { x: this.width / 2, y: this.height / 2 };
@@ -468,8 +429,6 @@
           x: (oldCenter.x - targetCenter.x) * newScale + canvasCenter.x * (1 - A),
           y: (oldCenter.y - targetCenter.y) * newScale + canvasCenter.y * (1 - A)
         };
-
-        // Save current state for zooming out.
         const snapshot = document.createElement("canvas");
         snapshot.width = this.width;
         snapshot.height = this.height;
@@ -478,11 +437,10 @@
           prevState: { centerX: oldCenter.x, centerY: oldCenter.y, scale: oldScale },
           A, B, snapshot
         });
-
         this.computeFractal(newScale, targetCenter.x, targetCenter.y);
         this.animateZoomIn(newScale, targetCenter, pivot, 600);
       }
-
+      
       animateZoomIn(targetScale, targetCenter, fixedPoint, durationMs) {
         this.animating = true;
         const oldScale = this.scale;
@@ -493,12 +451,10 @@
           x: (oldCenter.x - targetCenter.x) * targetScale + canvasCenter.x * (1 - A),
           y: (oldCenter.y - targetCenter.y) * targetScale + canvasCenter.y * (1 - A)
         };
-
         const tempCanvas = document.createElement("canvas");
         tempCanvas.width = this.width;
         tempCanvas.height = this.height;
         tempCanvas.getContext("2d").drawImage(this.canvasEl, 0, 0);
-
         const startTime = performance.now();
         const ctx = this.canvasEl.getContext("2d");
         const animateFrame = now => {
@@ -527,10 +483,9 @@
         };
         requestAnimationFrame(animateFrame);
       }
-
+      
       animateZoomOut(zoomEntry, durationMs) {
         this.animating = true;
-        // Dismiss the tip if visible, using compositional update.
         if (this.tipState === "shown") {
           this.update(() => { this.tipState = "dismissed"; });
         }
@@ -563,7 +518,7 @@
         };
         requestAnimationFrame(animateFrame);
       }
-
+      
       zoomOut() {
         if (this.animating) return;
         const ctx = this.canvasEl.getContext("2d");
@@ -582,7 +537,7 @@
           }
         }
       }
-
+      
       reset() {
         if (this.animating) return;
         this.zoomStack = [];
@@ -607,8 +562,8 @@
         document.body.removeChild(link);
       }
     }
-
-    new App(MandelbrotExplorer, "app");
+    
+    window.app = new App(MandelbrotExplorer, "app");
   </script>
 </body>
 </html>
