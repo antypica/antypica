@@ -2,8 +2,8 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <!-- Use the standard viewport tag -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Updated viewport tag for full-screen display -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
   <style>
     html, body {
@@ -13,11 +13,11 @@
       overflow: hidden;
       font-family: "Helvetica Neue", Arial, sans-serif;
     }
-    /* The #app container fills the viewport and holds the canvases and info box */
+    /* Use dynamic viewport height to accurately fill the visible area */
     #app {
       position: relative;
       width: 100vw;
-      height: 100vh;
+      height: 100dvh;
       background: black;
     }
     canvas {
@@ -31,12 +31,12 @@
     }
     #mainCanvas { z-index: 1; }
     #overlayCanvas { z-index: 2; pointer-events: none; }
-    /* The infoBox is overlaid on top of the canvases with a fixed offset */
+    /* Position the infoBox fixed to the viewport using a safe-area-aware bottom margin */
     .infoBox {
-      position: absolute;
-      bottom: 20px;
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
       right: 20px;
-      padding: 10px;      
+      padding: 10px;
       border-radius: 4px;
       z-index: 1000;
     }
@@ -45,7 +45,7 @@
         right: auto;
         left: 50%;
         transform: translateX(-50%);
-        bottom: 20px;
+        bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
       }
     }
     .infoBox .title {
