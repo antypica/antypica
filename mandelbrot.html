@@ -97,6 +97,7 @@
   <div id="app"></div>
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
+    import { transitionChildren } from "https://esm.sh/solenya-animation";
 
     // Worker code stored in a string.
     const workerCode = `
@@ -295,8 +296,8 @@
             width: this.width,
             height: this.height,
             onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
-          }),
-          this.tipState === "shown" ? div({ class: "tipOverlay" }, "click and drag to zoom") : undefined,
+          }),          
+          this.tip(),
           div(
             { class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
@@ -307,6 +308,13 @@
             )
           )
         );
+      }
+
+      tip() {
+        return div(transitionChildren({kind: "fade"}),
+          this.tipState !== "shown" ? undefined :
+          div ({ class: "tipOverlay" }, "click and drag to zoom")
+        )
       }
 
       initWorkers() {
