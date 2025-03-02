@@ -73,6 +73,21 @@
       border-color: rgba(255,255,255,1);
       background: rgba(70,70,70,0.8);
     }
+    /* New tip overlay style */
+    .tipOverlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 1rem;
+      color: #fff;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+      pointer-events: none;
+      z-index: 900;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 8px 12px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -174,14 +189,12 @@
     class MandelbrotExplorer extends Component {
       width = window.innerWidth;
       height = window.innerHeight;
-      // Viewport state
       centerX = undefined;
       centerY = undefined;
       scale = undefined;
       defaultCenterX = undefined;
       defaultCenterY = undefined;
       defaultScale = undefined;
-      // Worker & rendering state
       numWorkers = navigator.hardwareConcurrency || 4;
       workers = [];
       renderPassId = 0;
@@ -189,14 +202,13 @@
       maxIter = 1200;
       colorChoice = 24.2;
       animating = false;
-      // Zoom & animation state
       zoomStack = [];
       zoomOutFactor = 2;
       urlLoaded = false;
-      // Marquee (selection) state
       marqueeActive = false;
       marqueeStart = { x: 0, y: 0 };
-      marqueeCurrent = { x: 0, y: 0 };
+      marqueeCurrent = { x: 0, y: 0 };      
+      tipState = "not_shown";
 
       constructor() {
         super();
@@ -214,7 +226,6 @@
         }
       }
 
-      // Calculate default layout values.
       setLayoutDefaults() {
         const minX = -2.5, maxX = 1.0, minY = -1.0, maxY = 1.0;
         const wMB = maxX - minX, hMB = maxY - minY;
@@ -284,6 +295,7 @@
               height: this.height,
               onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
             }),
+            this.tipState === "shown" ? div({ class: "tipOverlay" }, "click and drag to zoom") : undefined,
             div(
               { class: "infoBox" },
               h1({ class: "title" }, "Mandelbrot Explorer"),
@@ -307,7 +319,6 @@
         this.computeFractal();
       }
 
-      // Handle worker response.
       handleWorkerMsg(e) {
         const { passId, startY, endY, pixels } = e.data;
         if (passId !== this.renderPassId) return;
@@ -323,7 +334,6 @@
         }
       }
 
-      // Compute fractal using workers.
       computeFractal(scaleOverride, centerXOverride, centerYOverride) {
         this.renderPassId++;
         const passId = this.renderPassId;
@@ -348,26 +358,30 @@
         }
       }
 
-      // Draw fractal if workers and canvas are ready.
       drawFractal() {
         if (this.canvasEl && this.workers.length) {
           this.computeFractal();
         }
       }
 
-      // Unified pointer/touch handlers using helper.
       startMarquee(e) {
         if (this.animating) return;
         const coords = getEventCoords(e, this.canvasEl);
         this.marqueeActive = true;
         this.marqueeStart = { ...coords };
         this.marqueeCurrent = { ...coords };
+        // Use compositional update to show the tip.
+        if (this.tipState === "not_shown") {
+          this.update(() => { this.tipState = "shown"; });
+        }
       }
+      
       updateMarquee(e) {
         if (!this.marqueeActive) return;
         this.marqueeCurrent = getEventCoords(e, this.canvasEl);
         this.drawMarquee();
       }
+      
       endMarquee(e) {
         if (!this.marqueeActive) return;
         this.marqueeActive = false;
@@ -376,7 +390,6 @@
         this.processMarquee(endCoords);
       }
 
-      // Draw selection rectangle.
       drawMarquee() {
         const ctx = this.overlayCanvas.getContext("2d");
         clearCanvas(this.overlayCanvas);
@@ -392,7 +405,6 @@
         ctx.restore();
       }
 
-      // Process the marquee selection to compute new view parameters.
       processMarquee(end) {
         const left = Math.min(this.marqueeStart.x, end.x);
         const right = Math.max(this.marqueeStart.x, end.x);
@@ -400,11 +412,15 @@
         const bottom = Math.max(this.marqueeStart.y, end.y);
         const w = right - left, h = bottom - top;
         if (w < 5 || h < 5) return;
-
+        
+        // Dismiss the tip using compositional update.
+        if (this.tipState === "shown") {
+          this.update(() => { this.tipState = "dismissed"; });
+        }
+        
         const oldScale = this.scale;
         const oldCenter = { x: this.centerX, y: this.centerY };
         const canvasCenter = { x: this.width / 2, y: this.height / 2 };
-
         const pivot = { x: left + w / 2, y: top + h / 2 };
         const fixedCoord = {
           x: (pivot.x - canvasCenter.x) / oldScale + oldCenter.x,
@@ -444,7 +460,6 @@
           y: (oldCenter.y - targetCenter.y) * targetScale + canvasCenter.y * (1 - A)
         };
 
-        // Capture the current state.
         const tempCanvas = document.createElement("canvas");
         tempCanvas.width = this.width;
         tempCanvas.height = this.height;
@@ -481,6 +496,10 @@
 
       animateZoomOut(zoomEntry, durationMs) {
         this.animating = true;
+        // Dismiss the tip if visible, using compositional update.
+        if (this.tipState === "shown") {
+          this.update(() => { this.tipState = "dismissed"; });
+        }
         const { A, B, snapshot, prevState } = zoomEntry;
         const ctx = this.canvasEl.getContext("2d");
         const startTime = performance.now();
@@ -511,7 +530,6 @@
         requestAnimationFrame(animateFrame);
       }
 
-      // Zoom out action: pop state from stack or compute a new scale.
       zoomOut() {
         if (this.animating) return;
         const ctx = this.canvasEl.getContext("2d");
