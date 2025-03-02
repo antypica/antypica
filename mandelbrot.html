@@ -2,7 +2,8 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <!-- Note the added viewport-fit=cover -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
   <style>
     html, body {
@@ -32,21 +33,19 @@
     #overlayCanvas { z-index: 2; pointer-events: none; }
     .infoBox {
       position: absolute;
-      bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-      bottom: calc(20px + constant(safe-area-inset-bottom, 0px));
+      /* Use the global safe-bottom variable */
+      bottom: calc(20px + var(--safe-bottom, 0px));
       right: 20px;
       padding: 10px;
       border-radius: 4px;
       z-index: 1000;
     }
-
     @media (max-width: 768px) {
       .infoBox {
         right: auto;
         left: 50%;
         transform: translateX(-50%);
-        bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-        bottom: calc(20px + constant(safe-area-inset-bottom, 0px));
+        bottom: calc(20px + var(--safe-bottom, 0px));
       }
     }
     .infoBox .title {
@@ -93,6 +92,31 @@
       border-radius: 4px;
     }
   </style>
+  <!-- Global safe-area inset script -->
+  <script>
+    (function updateSafeAreaInsets() {
+      function computeInsets() {
+        let safeTop = 0, safeBottom = 0, safeLeft = 0, safeRight = 0;
+        if (window.visualViewport) {
+          safeTop = window.visualViewport.offsetTop;
+          safeLeft = window.visualViewport.offsetLeft;
+          safeBottom = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+          safeRight = window.innerWidth - window.visualViewport.width - window.visualViewport.offsetLeft;
+        }
+        document.documentElement.style.setProperty('--safe-top', safeTop + 'px');
+        document.documentElement.style.setProperty('--safe-bottom', safeBottom + 'px');
+        document.documentElement.style.setProperty('--safe-left', safeLeft + 'px');
+        document.documentElement.style.setProperty('--safe-right', safeRight + 'px');
+      }
+      computeInsets();
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', computeInsets);
+        window.visualViewport.addEventListener('scroll', computeInsets);
+      } else {
+        window.addEventListener('resize', computeInsets);
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="app"></div>
