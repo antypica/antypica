@@ -24,11 +24,17 @@
       left: 0;
       width: 100%;
       height: 100%;
-      cursor: crosshair;
       user-select: none;
     }
-    #mainCanvas { z-index: 1; }
-    #overlayCanvas { z-index: 2; pointer-events: none; }    
+    #mainCanvas { 
+      z-index: 1; 
+      cursor: crosshair;
+    }
+    /* Marquee canvas is on top and handles its own events */
+    #marqueeCanvas { 
+      z-index: 2; 
+      cursor: crosshair;
+    }
     .infoBox {
       position: fixed;
       bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
@@ -97,6 +103,7 @@
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
     
+    // Worker code.
     const workerCode = `
       const LOG2 = Math.log(2);
       function mandelJS(cr, ci, maxIter) {
@@ -172,20 +179,10 @@
       canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
     }
 
-    function getEventCoords(e, canvasEl) {
-      const rect = canvasEl.getBoundingClientRect();
-      if (e.touches && e.touches.length) {
-        return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-      } else if (e.changedTouches && e.changedTouches.length) {
-        return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
-      }
-      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    }
-
     function controlButton(...values) {
       return button({ class: "controlButton", onmouseup: e => e.target.blur() }, ...values);
     }
-
+    
     class Tip extends Component {
       element = undefined;
       tipState = "not_shown";
@@ -193,23 +190,21 @@
       view(title = "") {
         return div({
           onAttached: e => {
-            this.element = e
+            this.element = e;
             this.element.style.opacity = "0";
             this.element.style.visibility = "hidden";
           },
           class: "tipOverlay"
-        },
-          title
-        )
+        }, title);
       }
 
       show() {
         if (this.tipState === "not_shown") {
-            this.tipState = "shown";
-            this.element.style.opacity = "1";
-            this.element.style.visibility = "visible"; 
-          }
+          this.tipState = "shown";
+          this.element.style.opacity = "1";
+          this.element.style.visibility = "visible"; 
         }
+      }
 
       hide() {
         if (this.tipState === "shown") {
@@ -217,6 +212,100 @@
           this.element.style.opacity = "0";
           this.element.style.visibility = "hidden";          
         }
+      }
+    }
+
+    class Marquee extends Component {
+      active = false;
+      startPos = { x: 0, y: 0 };
+      currentPos = { x: 0, y: 0 };
+      canvasEl = undefined;
+      onStart = undefined
+      onEnd = undefined
+
+      view() {
+        return canvas({
+          id: "marqueeCanvas",
+          onpointerdown: e => this.handlePointerDown(e),
+          onpointermove: e => this.handlePointerMove(e),
+          onpointerup: e => this.handlePointerUp(e),        
+          onAttached: el => {
+            this.canvasEl = el;
+            this.resize();
+            clearCanvas(el);                      
+            el.addEventListener("touchstart", e => {  e.preventDefault();  this.handlePointerDown(e) ;}, { passive: false });
+            el.addEventListener("touchmove", e => { e.preventDefault();  this.handlePointerMove(e); }, { passive: false });
+            el.addEventListener("touchend", e => {  e.preventDefault();  this.handlePointerUp(e); }, { passive: false });
+          }
+        });
+      }
+      
+      // could be more reusuable, but it's just a little app
+      resize() {
+        if (this.canvasEl) {
+          this.canvasEl.width = window.innerWidth;
+          this.canvasEl.height = window.innerHeight;
+          clearCanvas(this.canvasEl);
+        }
+      }
+
+      // Return event coordinates relative to the canvas.
+      getEventCoords(e) {
+        const rect = this.canvasEl.getBoundingClientRect();
+        if (e.touches && e.touches.length) {
+          return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+        } else if (e.changedTouches && e.changedTouches.length) {
+          return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
+        }
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      }
+
+      handlePointerDown(e) {
+        const coords = this.getEventCoords(e);
+        this.active = true;
+        this.startPos = { ...coords };
+        this.currentPos = { ...coords };
+        clearCanvas(this.canvasEl);
+        this.onStart();
+      }
+
+      handlePointerMove(e) {
+        if (!this.active) return;
+        const coords = this.getEventCoords(e);
+        this.currentPos = { ...coords };
+        this.draw();
+      }
+
+      handlePointerUp(e) {
+        if (!this.active) return;
+        this.active = false;
+        const rect = this.getRect();
+        clearCanvas(this.canvasEl);
+        this.onEnd(rect);
+      }
+
+      draw() {
+        if (!this.canvasEl) return;
+        const ctx = this.canvasEl.getContext("2d");
+        clearCanvas(this.canvasEl);
+        const left = Math.min(this.startPos.x, this.currentPos.x);
+        const top = Math.min(this.startPos.y, this.currentPos.y);
+        const width = Math.abs(this.currentPos.x - this.startPos.x);
+        const height = Math.abs(this.currentPos.y - this.startPos.y);
+        ctx.save();
+        ctx.strokeStyle = "#444";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6]);
+        ctx.strokeRect(left, top, width, height);
+        ctx.restore();
+      }
+
+      getRect() {
+        const left = Math.min(this.startPos.x, this.currentPos.x);
+        const top = Math.min(this.startPos.y, this.currentPos.y);
+        const width = Math.abs(this.currentPos.x - this.startPos.x);
+        const height = Math.abs(this.currentPos.y - this.startPos.y);
+        return { left, top, width, height };
       }
     }
 
@@ -239,10 +328,8 @@
       zoomStack = [];
       zoomOutFactor = 2;
       urlLoaded = false;
-      marqueeActive = false;
-      marqueeStart = { x: 0, y: 0 };
-      marqueeCurrent = { x: 0, y: 0 };
-      tip = new Tip()
+      tip = new Tip();      
+      marquee = new Marquee();
 
       constructor() {
         super();
@@ -257,6 +344,8 @@
           this.urlLoaded = true;
         }
         this.initResizeHandler();
+        this.marquee.onStart = () => this.tip.show(),
+        this.marquee.onEnd = rect => this.processMarquee(rect)
       }
 
       setLayoutDefaults() {
@@ -281,8 +370,9 @@
         window.addEventListener("resize", debounce(() => {
           this.width = window.innerWidth;
           this.height = window.innerHeight;
-          this.canvasEl.width = this.overlayCanvas.width = this.width;
-          this.canvasEl.height = this.overlayCanvas.height = this.height;
+          this.canvasEl.width = this.width;
+          this.canvasEl.height = this.height;          
+          this.marquee.resize();
           this.setLayoutDefaults();
           this.computeFractal();
         }, 100));
@@ -307,36 +397,24 @@
           canvas({
             id: "mainCanvas",
             width: this.width,
-            height: this.height,
-            onpointerdown: e => this.startMarquee(e),
-            onpointermove: e => this.updateMarquee(e),
-            onpointerup: e => this.endMarquee(e),
+            height: this.height,            
             onAttached: el => {
               this.canvasEl = el;
-              el.addEventListener("touchstart", e => { e.preventDefault(); this.startMarquee(e); }, { passive: false });
-              el.addEventListener("touchmove", e => { e.preventDefault(); this.updateMarquee(e); }, { passive: false });
-              el.addEventListener("touchend", e => { e.preventDefault(); this.endMarquee(e); }, { passive: false });
               this.initWorkers();
             }
-          }),
-          canvas({
-            id: "overlayCanvas",
-            width: this.width,
-            height: this.height,
-            onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
           }),          
+          this.marquee.view(),
           this.tip.view("click and drag to zoom"),
-          div(
-            { class: "infoBox" },
+          div({ class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
-            div({ class: "controls" },                                                        
+            div({ class: "controls" },
               controlButton({ onclick: () => this.reset() }, "Reset"),
               controlButton({ onclick: () => this.zoomOut() }, "Zoom Out"),
               controlButton({ onclick: () => this.saveImage() }, "Snapshot")
             )
           )
         );
-      }
+      }      
 
       initWorkers() {
         for (let i = 0; i < this.numWorkers; i++) {
@@ -386,68 +464,20 @@
         }
       }
 
-      drawFractal() {
-        if (this.canvasEl && this.workers.length) {
-          this.computeFractal();
-        }
-      }
-
-      startMarquee(e) {
-        if (this.animating) return;
-        const coords = getEventCoords(e, this.canvasEl);
-        this.marqueeActive = true;
-        this.marqueeStart = { ...coords };
-        this.marqueeCurrent = { ...coords };
-        this.tip.show();        
-      }
-      
-      updateMarquee(e) {
-        if (!this.marqueeActive) return;
-        this.marqueeCurrent = getEventCoords(e, this.canvasEl);
-        this.drawMarquee();
-      }
-      
-      endMarquee(e) {
-        if (!this.marqueeActive) return;
-        this.marqueeActive = false;
-        clearCanvas(this.overlayCanvas);
-        const endCoords = getEventCoords(e, this.canvasEl);
-        this.processMarquee(endCoords);
-      }
-      
-      drawMarquee() {
-        const ctx = this.overlayCanvas.getContext("2d");
-        clearCanvas(this.overlayCanvas);
-        const left = Math.min(this.marqueeStart.x, this.marqueeCurrent.x);
-        const top = Math.min(this.marqueeStart.y, this.marqueeCurrent.y);
-        const width = Math.abs(this.marqueeCurrent.x - this.marqueeStart.x);
-        const height = Math.abs(this.marqueeCurrent.y - this.marqueeStart.y);
-        ctx.save();
-        ctx.strokeStyle = "#444";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6]);
-        ctx.strokeRect(left, top, width, height);
-        ctx.restore();
-      }
-      
-      processMarquee(end) {
-        const left = Math.min(this.marqueeStart.x, end.x);
-        const right = Math.max(this.marqueeStart.x, end.x);
-        const top = Math.min(this.marqueeStart.y, end.y);
-        const bottom = Math.max(this.marqueeStart.y, end.y);
-        const w = right - left, h = bottom - top;
-        if (w < 5 || h < 5) return;
-        this.tip.hide();        
+      processMarquee(rect) {
+        const { left, top, width, height } = rect;
+        if (width < 5 || height < 5) return;
+        this.tip.hide();
         const oldScale = this.scale;
         const oldCenter = { x: this.centerX, y: this.centerY };
         const canvasCenter = { x: this.width / 2, y: this.height / 2 };
-        const pivot = { x: left + w / 2, y: top + h / 2 };
+        const pivot = { x: left + width / 2, y: top + height / 2 };
         const fixedCoord = {
           x: (pivot.x - canvasCenter.x) / oldScale + oldCenter.x,
           y: (pivot.y - canvasCenter.y) / oldScale + oldCenter.y
         };
         const targetCenter = { ...fixedCoord };
-        const factor = Math.max(w / this.width, h / this.height);
+        const factor = Math.max(width / this.width, height / this.height);
         const newScale = oldScale / factor;
         const A = newScale / oldScale;
         const B = {
@@ -465,7 +495,7 @@
         this.computeFractal(newScale, targetCenter.x, targetCenter.y);
         this.animateZoomIn(newScale, targetCenter, pivot, 600);
       }
-      
+
       animateZoomIn(targetScale, targetCenter, fixedPoint, durationMs) {
         this.animating = true;
         const oldScale = this.scale;
@@ -508,10 +538,10 @@
         };
         requestAnimationFrame(animateFrame);
       }
-      
+
       animateZoomOut(zoomEntry, durationMs) {
         this.animating = true;
-        this.tip.hide()
+        this.tip.hide();
         const { A, B, snapshot, prevState } = zoomEntry;
         const ctx = this.canvasEl.getContext("2d");
         const startTime = performance.now();
@@ -541,10 +571,9 @@
         };
         requestAnimationFrame(animateFrame);
       }
-      
+
       zoomOut() {
         if (this.animating) return;
-        const ctx = this.canvasEl.getContext("2d");
         if (this.zoomStack.length > 0) {
           const zoomEntry = this.zoomStack.pop();
           this.computeFractal(zoomEntry.prevState.scale, zoomEntry.prevState.centerX, zoomEntry.prevState.centerY);
@@ -560,7 +589,7 @@
           }
         }
       }
-      
+
       reset() {
         if (this.animating) return;
         this.zoomStack = [];
@@ -570,7 +599,7 @@
         this.computeFractal();
         this.updateURL();
       }
-      
+
       saveImage() {
         if (this.animating) return;
         const dataURL = this.canvasEl.toDataURL("image/jpeg");
