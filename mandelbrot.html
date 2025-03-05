@@ -65,6 +65,7 @@
       border: 2px solid rgba(255,255,255,0.7);
       border-radius: 4px;
       cursor: pointer;
+      white-space: nowrap;
       transition: background 0.2s, color 0.2s;
     }
     .controlButton:hover,
@@ -73,6 +74,7 @@
       border-color: rgba(255,255,255,1);
       background: rgba(70,70,70,0.8);
     }
+    .controlButton:focus { outline: none; }
     .tipOverlay {
       position: absolute;
       top: 50%;
@@ -85,7 +87,8 @@
       z-index: 900;
       background: rgba(0, 0, 0, 0.4);
       padding: 8px 12px;
-      border-radius: 4px;
+      border-radius: 4px;    
+      transition: opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
     }
   </style>
 </head>
@@ -93,7 +96,6 @@
   <div id="app"></div>
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
-    import { transitionChildren } from "https://esm.sh/solenya-animation";
     
     const workerCode = `
       const LOG2 = Math.log(2);
@@ -184,6 +186,40 @@
       return button({ class: "controlButton", onmouseup: e => e.target.blur() }, ...values);
     }
 
+    class Tip extends Component {
+      element = undefined;
+      tipState = "not_shown";
+
+      view(title = "") {
+        return div({
+          onAttached: e => {
+            this.element = e
+            this.element.style.opacity = "0";
+            this.element.style.visibility = "hidden";
+          },
+          class: "tipOverlay"
+        },
+          title
+        )
+      }
+
+      show() {
+        if (this.tipState === "not_shown") {
+            this.tipState = "shown";
+            this.element.style.opacity = "1";
+            this.element.style.visibility = "visible"; 
+          }
+        }
+
+      hide() {
+        if (this.tipState === "shown") {
+          this.tipState = "dismissed";
+          this.element.style.opacity = "0";
+          this.element.style.visibility = "hidden";          
+        }
+      }
+    }
+
     class MandelbrotExplorer extends Component {
       width = window.innerWidth;
       height = window.innerHeight;
@@ -206,7 +242,7 @@
       marqueeActive = false;
       marqueeStart = { x: 0, y: 0 };
       marqueeCurrent = { x: 0, y: 0 };
-      tipState = "not_shown";
+      tip = new Tip()
 
       constructor() {
         super();
@@ -289,24 +325,17 @@
             height: this.height,
             onAttached: el => { this.overlayCanvas = el; clearCanvas(el); }
           }),          
-          this.tip(),
+          this.tip.view("click and drag to zoom"),
           div(
             { class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
-            div({ class: "controls" },                            
+            div({ class: "controls" },                                                        
               controlButton({ onclick: () => this.reset() }, "Reset"),
               controlButton({ onclick: () => this.zoomOut() }, "Zoom Out"),
               controlButton({ onclick: () => this.saveImage() }, "Snapshot")
             )
           )
         );
-      }
-
-      tip() {
-        return div(transitionChildren({kind: "fade"}),
-          this.tipState !== "shown" ? undefined :
-          div ({ class: "tipOverlay" }, "click and drag to zoom")
-        )
       }
 
       initWorkers() {
@@ -369,9 +398,7 @@
         this.marqueeActive = true;
         this.marqueeStart = { ...coords };
         this.marqueeCurrent = { ...coords };
-        if (this.tipState === "not_shown") {
-          this.update(() => { this.tipState = "shown"; });
-        }
+        this.tip.show();        
       }
       
       updateMarquee(e) {
@@ -410,9 +437,7 @@
         const bottom = Math.max(this.marqueeStart.y, end.y);
         const w = right - left, h = bottom - top;
         if (w < 5 || h < 5) return;
-        if (this.tipState === "shown") {
-          this.update(() => { this.tipState = "dismissed"; });
-        }
+        this.tip.hide();        
         const oldScale = this.scale;
         const oldCenter = { x: this.centerX, y: this.centerY };
         const canvasCenter = { x: this.width / 2, y: this.height / 2 };
@@ -486,9 +511,7 @@
       
       animateZoomOut(zoomEntry, durationMs) {
         this.animating = true;
-        if (this.tipState === "shown") {
-          this.update(() => { this.tipState = "dismissed"; });
-        }
+        this.tip.hide()
         const { A, B, snapshot, prevState } = zoomEntry;
         const ctx = this.canvasEl.getContext("2d");
         const startTime = performance.now();
