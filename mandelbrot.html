@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8" />
-  <!-- Updated viewport tag for full-screen display -->
+  <meta charset="UTF-8" />  
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
   <style>
@@ -12,8 +11,7 @@
       height: 100%;
       overflow: hidden;
       font-family: "Helvetica Neue", Arial, sans-serif;
-    }
-    /* Use dynamic viewport height to accurately fill the visible area */
+    }    
     #app {
       position: relative;
       width: 100vw;
@@ -30,8 +28,7 @@
       user-select: none;
     }
     #mainCanvas { z-index: 1; }
-    #overlayCanvas { z-index: 2; pointer-events: none; }
-    /* Position the infoBox fixed to the viewport using a safe-area-aware bottom margin */
+    #overlayCanvas { z-index: 2; pointer-events: none; }    
     .infoBox {
       position: fixed;
       bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
@@ -92,14 +89,12 @@
     }
   </style>
 </head>
-<body>
-  <!-- The container for our app -->
+<body>  
   <div id="app"></div>
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
     import { transitionChildren } from "https://esm.sh/solenya-animation";
-
-    // Worker code stored in a string.
+    
     const workerCode = `
       const LOG2 = Math.log(2);
       function mandelJS(cr, ci, maxIter) {
@@ -158,13 +153,11 @@
       };
     `;
 
-    // Create a new worker.
     function createWorker() {
       const blob = new Blob([workerCode], { type: "application/javascript" });
       return new Worker(URL.createObjectURL(blob));
     }
 
-    // Debounce helper.
     function debounce(fn, ms) {
       let t;
       return function (...args) {
@@ -173,12 +166,10 @@
       };
     }
 
-    // Clear a canvas.
     function clearCanvas(canvasEl) {
       canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
     }
 
-    // Unified pointer/touch event handler.
     function getEventCoords(e, canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
       if (e.touches && e.touches.length) {
@@ -187,6 +178,10 @@
         return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
       }
       return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    function controlButton(...values) {
+      return button({ class: "controlButton", onmouseup: e => e.target.blur() }, ...values);
     }
 
     class MandelbrotExplorer extends Component {
@@ -225,6 +220,7 @@
           this.scale = parseFloat(params.get('z'));
           this.urlLoaded = true;
         }
+        this.initResizeHandler();
       }
 
       setLayoutDefaults() {
@@ -243,10 +239,6 @@
           this.centerX = this.defaultCenterX;
           this.centerY = this.defaultCenterY;
         }
-      }
-
-      attached() {
-        this.initResizeHandler();
       }
 
       initResizeHandler() {
@@ -301,10 +293,10 @@
           div(
             { class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
-            div({ class: "controls" },
-              button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out"),
-              button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
-              button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot")
+            div({ class: "controls" },                            
+              controlButton({ onclick: () => this.reset() }, "Reset"),
+              controlButton({ onclick: () => this.zoomOut() }, "Zoom Out"),
+              controlButton({ onclick: () => this.saveImage() }, "Snapshot")
             )
           )
         );
@@ -557,6 +549,7 @@
       }
       
       saveImage() {
+        if (this.animating) return;
         const dataURL = this.canvasEl.toDataURL("image/jpeg");
         let filename = window.location.search.substring(1) || "mandelbrot";
         filename = filename.replace(/[^a-z0-9]/gi, '_') || "mandelbrot";
