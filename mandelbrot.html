@@ -29,8 +29,7 @@
     #mainCanvas { 
       z-index: 1; 
       cursor: crosshair;
-    }
-    /* Marquee canvas is on top and handles its own events */
+    }    
     #marqueeCanvas { 
       z-index: 2; 
       cursor: crosshair;
@@ -103,7 +102,6 @@
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
     
-    // Worker code.
     const workerCode = `
       const LOG2 = Math.log(2);
       function mandelJS(cr, ci, maxIter) {
@@ -232,8 +230,7 @@
           onAttached: el => {
             this.canvasEl = el;
             this.resize();
-            clearCanvas(el);                      
-            el.addEventListener("touchstart", e => {  e.preventDefault();  this.handlePointerDown(e) ;}, { passive: false });
+            el.addEventListener("touchstart", e => {  e.preventDefault();  this.handlePointerDown(e); }, { passive: false });
             el.addEventListener("touchmove", e => { e.preventDefault();  this.handlePointerMove(e); }, { passive: false });
             el.addEventListener("touchend", e => {  e.preventDefault();  this.handlePointerUp(e); }, { passive: false });
           }
@@ -242,11 +239,9 @@
       
       // could be more reusuable, but it's just a little app
       resize() {
-        if (this.canvasEl) {
-          this.canvasEl.width = window.innerWidth;
-          this.canvasEl.height = window.innerHeight;
-          clearCanvas(this.canvasEl);
-        }
+        this.canvasEl.width = window.innerWidth;
+        this.canvasEl.height = window.innerHeight;
+        clearCanvas(this.canvasEl);
       }
 
       // Return event coordinates relative to the canvas.
@@ -333,9 +328,16 @@
 
       constructor() {
         super();
+        this.initFromURL();
         this.width = window.innerWidth;
         this.height = window.innerHeight;
-        this.setLayoutDefaults();
+        this.setLayoutDefaults();                
+        this.initResizeHandler();
+        this.marquee.onStart = () => this.tip.show(),
+        this.marquee.onEnd = rect => this.processMarquee(rect)
+      }
+
+      initFromURL() {
         const params = new URLSearchParams(window.location.search);
         if (params.has('x') && params.has('y') && params.has('z')) {
           this.centerX = parseFloat(params.get('x'));
@@ -343,9 +345,20 @@
           this.scale = parseFloat(params.get('z'));
           this.urlLoaded = true;
         }
-        this.initResizeHandler();
-        this.marquee.onStart = () => this.tip.show(),
-        this.marquee.onEnd = rect => this.processMarquee(rect)
+      }
+
+      updateURL() {
+        if (this.centerX === this.defaultCenterX &&
+            this.centerY === this.defaultCenterY &&
+            this.scale === this.defaultScale) {
+          history.replaceState(null, "", window.location.pathname);
+        } else {
+          const params = new URLSearchParams();
+          params.set("x", this.centerX.toString());
+          params.set("y", this.centerY.toString());
+          params.set("z", this.scale.toString());
+          history.replaceState(null, "", window.location.pathname + "?" + params.toString());
+        }
       }
 
       setLayoutDefaults() {
@@ -376,20 +389,6 @@
           this.setLayoutDefaults();
           this.computeFractal();
         }, 100));
-      }
-
-      updateURL() {
-        if (this.centerX === this.defaultCenterX &&
-            this.centerY === this.defaultCenterY &&
-            this.scale === this.defaultScale) {
-          history.replaceState(null, "", window.location.pathname);
-        } else {
-          const params = new URLSearchParams();
-          params.set("x", this.centerX.toString());
-          params.set("y", this.centerY.toString());
-          params.set("z", this.scale.toString());
-          history.replaceState(null, "", window.location.pathname + "?" + params.toString());
-        }
       }
 
       view() {
