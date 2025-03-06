@@ -27,8 +27,7 @@
       user-select: none;
     }
     #mainCanvas { 
-      z-index: 1; 
-      cursor: crosshair;
+      z-index: 1;       
     }    
     #marqueeCanvas { 
       z-index: 2; 
@@ -101,7 +100,7 @@
   <div id="app"></div>
   <script type="module">
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
-    
+
     const workerCode = `
       const LOG2 = Math.log(2);
       function mandelJS(cr, ci, maxIter) {
@@ -160,9 +159,58 @@
       };
     `;
 
-    function createWorker() {
-      const blob = new Blob([workerCode], { type: "application/javascript" });
-      return new Worker(URL.createObjectURL(blob));
+    class MandelbrotComputer {
+      numWorkers = undefined;
+      workers = [];
+      renderPassId = 0;
+      pendingChunks = 0;
+      chunksComplete = 0;
+      imageData = undefined;
+      onComplete = undefined;
+
+      constructor(numWorkers = navigator.hardwareConcurrency || 4) {
+        this.numWorkers = numWorkers;
+        for (let i = 0; i < this.numWorkers; i++) {
+          const blob = new Blob([workerCode], { type: "application/javascript" });
+          const w = new Worker(URL.createObjectURL(blob));
+          w.onmessage = (e) => this.handleWorkerMsg(e);
+          this.workers.push(w);
+        }
+      }
+
+      computeFractal(params) {
+        this.renderPassId++;
+        const passId = this.renderPassId;
+        const { width, height, scale, centerX, centerY, maxIter, colorChoice } = params;
+        this.imageData = new ImageData(width, height);
+        this.pendingChunks = this.numWorkers;
+        this.chunksComplete = 0;
+        return new Promise(resolve => {
+          this.onComplete = resolve;
+          const chunkHeight = Math.floor(height / this.numWorkers);
+          for (let i = 0; i < this.numWorkers; i++) {
+            const startY = i * chunkHeight;
+            const endY = (i === this.numWorkers - 1) ? height : startY + chunkHeight;
+            this.workers[i].postMessage({
+              passId, startY, endY, width, height,
+              scale, centerX, centerY,
+              maxIter, colorChoice
+            });
+          }
+        });
+      }
+
+      handleWorkerMsg(e) {
+        const { passId, startY, endY, pixels } = e.data;
+        if (passId !== this.renderPassId) return;
+        const width = this.imageData.width;
+        this.imageData.data.set(pixels, startY * width * 4);
+        this.chunksComplete++;
+        if (this.chunksComplete === this.pendingChunks && this.onComplete) {
+          this.onComplete(this.imageData);
+          this.onComplete = undefined;
+        }
+      }
     }
 
     function debounce(fn, ms) {
@@ -180,20 +228,20 @@
     function controlButton(...values) {
       return button({ class: "controlButton", onmouseup: e => e.target.blur() }, ...values);
     }
-    
+
     class Tip extends Component {
       element = undefined;
       tipState = "not_shown";
 
-      view(title = "") {
+      view(attrs, content) {
         return div({
+          ...attrs,
           onAttached: e => {
             this.element = e;
             this.element.style.opacity = "0";
             this.element.style.visibility = "hidden";
-          },
-          class: "tipOverlay"
-        }, title);
+          },          
+        }, content);
       }
 
       show() {
@@ -218,33 +266,24 @@
       startPos = { x: 0, y: 0 };
       currentPos = { x: 0, y: 0 };
       canvasEl = undefined;
-      onStart = undefined
-      onEnd = undefined
+      onStart = undefined;
+      onEnd = undefined;
 
-      view() {
+      view(attrs) {
         return canvas({
-          id: "marqueeCanvas",
+          ...attrs,          
           onpointerdown: e => this.handlePointerDown(e),
           onpointermove: e => this.handlePointerMove(e),
-          onpointerup: e => this.handlePointerUp(e),        
+          onpointerup: e => this.handlePointerUp(e),
           onAttached: el => {
-            this.canvasEl = el;
-            this.resize();
-            el.addEventListener("touchstart", e => {  e.preventDefault();  this.handlePointerDown(e); }, { passive: false });
-            el.addEventListener("touchmove", e => { e.preventDefault();  this.handlePointerMove(e); }, { passive: false });
-            el.addEventListener("touchend", e => {  e.preventDefault();  this.handlePointerUp(e); }, { passive: false });
+            this.canvasEl = el;            
+            el.addEventListener("touchstart", e => { e.preventDefault(); this.handlePointerDown(e); }, { passive: false });
+            el.addEventListener("touchmove", e => { e.preventDefault(); this.handlePointerMove(e); }, { passive: false });
+            el.addEventListener("touchend", e => { e.preventDefault(); this.handlePointerUp(e); }, { passive: false });
           }
         });
       }
-      
-      // could be more reusuable, but it's just a little app
-      resize() {
-        this.canvasEl.width = window.innerWidth;
-        this.canvasEl.height = window.innerHeight;
-        clearCanvas(this.canvasEl);
-      }
 
-      // Return event coordinates relative to the canvas.
       getEventCoords(e) {
         const rect = this.canvasEl.getBoundingClientRect();
         if (e.touches && e.touches.length) {
@@ -261,7 +300,7 @@
         this.startPos = { ...coords };
         this.currentPos = { ...coords };
         clearCanvas(this.canvasEl);
-        this.onStart();
+        this.onStart && this.onStart();
       }
 
       handlePointerMove(e) {
@@ -276,7 +315,7 @@
         this.active = false;
         const rect = this.getRect();
         clearCanvas(this.canvasEl);
-        this.onEnd(rect);
+        this.onEnd && this.onEnd(rect);
       }
 
       draw() {
@@ -305,36 +344,36 @@
     }
 
     class MandelbrotExplorer extends Component {
-      width = window.innerWidth;
-      height = window.innerHeight;
+      width = undefined;
+      height = undefined;
       centerX = undefined;
       centerY = undefined;
       scale = undefined;
       defaultCenterX = undefined;
       defaultCenterY = undefined;
       defaultScale = undefined;
-      numWorkers = navigator.hardwareConcurrency || 4;
-      workers = [];
-      renderPassId = 0;
-      computedImageData = null;
       maxIter = 1200;
       colorChoice = 24.2;
       animating = false;
       zoomStack = [];
-      zoomOutFactor = 2;
-      urlLoaded = false;
-      tip = new Tip();      
+      zoomOutFactor = 2;      
+      tip = new Tip();
       marquee = new Marquee();
+      mandelbrotComputer = new MandelbrotComputer();
 
       constructor() {
-        super();
-        this.initFromURL();
-        this.width = window.innerWidth;
-        this.height = window.innerHeight;
-        this.setLayoutDefaults();                
-        this.initResizeHandler();
-        this.marquee.onStart = () => this.tip.show(),
-        this.marquee.onEnd = rect => this.processMarquee(rect)
+        super()
+        this.initFromURL();        
+        this.marquee.onStart = () => this.tip.show();
+        this.marquee.onEnd = rect => this.processMarquee(rect);                        
+        setTimeout (() => this.updateLayoutAndCompute(), 1)
+        window.addEventListener("resize", debounce(() => this.updateLayoutAndCompute(), 100));
+      }
+
+      updateLayoutAndCompute() {
+        this.zoomStack = []; // Dump zoom stack on resize
+        this.updateLayout();                    
+        this.computeAndRender();
       }
 
       initFromURL() {
@@ -342,8 +381,7 @@
         if (params.has('x') && params.has('y') && params.has('z')) {
           this.centerX = parseFloat(params.get('x'));
           this.centerY = parseFloat(params.get('y'));
-          this.scale = parseFloat(params.get('z'));
-          this.urlLoaded = true;
+          this.scale = parseFloat(params.get('z'));          
         }
       }
 
@@ -361,7 +399,9 @@
         }
       }
 
-      setLayoutDefaults() {
+      updateLayout() {
+        this.width = this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
+        this.height = this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;
         const minX = -2.5, maxX = 1.0, minY = -1.0, maxY = 1.0;
         const wMB = maxX - minX, hMB = maxY - minY;
         const cAspect = this.width / this.height;
@@ -379,31 +419,20 @@
         }
       }
 
-      initResizeHandler() {
-        window.addEventListener("resize", debounce(() => {
-          this.width = window.innerWidth;
-          this.height = window.innerHeight;
-          this.canvasEl.width = this.width;
-          this.canvasEl.height = this.height;          
-          this.marquee.resize();
-          this.setLayoutDefaults();
-          this.computeFractal();
-        }, 100));
-      }
-
-      view() {
+      view() {        
         return div(
           canvas({
             id: "mainCanvas",
             width: this.width,
-            height: this.height,            
-            onAttached: el => {
-              this.canvasEl = el;
-              this.initWorkers();
-            }
-          }),          
-          this.marquee.view(),
-          this.tip.view("click and drag to zoom"),
+            height: this.height,
+            onAttached: el => { this.canvasEl = el; }
+          }),
+          this.marquee.view({
+            id: "marqueeCanvas",
+            width: this.width,
+            height: this.height
+          }),
+          this.tip.view({class: "tipOverlay"}, "click and drag to zoom"),
           div({ class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
             div({ class: "controls" },
@@ -413,54 +442,26 @@
             )
           )
         );
-      }      
-
-      initWorkers() {
-        for (let i = 0; i < this.numWorkers; i++) {
-          const w = createWorker();
-          w.onmessage = e => this.handleWorkerMsg(e);
-          this.workers.push(w);
-        }
-        this.computeFractal();
       }
 
-      handleWorkerMsg(e) {
-        const { passId, startY, endY, pixels } = e.data;
-        if (passId !== this.renderPassId) return;
-        this.currentImageData.data.set(pixels, (startY * this.currentImageData.width) * 4);
-        this.chunksComplete++;
-        if (this.chunksComplete === this.pendingChunks) {
-          const ctx = this.canvasEl.getContext("2d");
-          if (this.animating) {
-            this.computedImageData = this.currentImageData;
-          } else {
-            ctx.putImageData(this.currentImageData, 0, 0);
-          }
-        }
-      }
-
-      computeFractal(scaleOverride, centerXOverride, centerYOverride) {
-        this.renderPassId++;
-        const passId = this.renderPassId;
-        const w = this.width, h = this.height;
-        this.currentImageData = new ImageData(w, h);
-        this.pendingChunks = this.numWorkers;
-        this.chunksComplete = 0;
-        this.computedImageData = null;
+      computeAndRender(scaleOverride, centerXOverride, centerYOverride) {        
         const scale = scaleOverride ?? this.scale;
         const centerX = centerXOverride ?? this.centerX;
         const centerY = centerYOverride ?? this.centerY;
-        const chunkHeight = Math.floor(h / this.numWorkers);
-        for (let i = 0; i < this.numWorkers; i++) {
-          const startY = i * chunkHeight;
-          const endY = (i === this.numWorkers - 1) ? h : startY + chunkHeight;
-          this.workers[i].postMessage({
-            passId, startY, endY, width: w, height: h,
-            scale, centerX, centerY,
-            maxIter: this.maxIter,
-            colorChoice: this.colorChoice
-          });
-        }
+        
+        return this.mandelbrotComputer.computeFractal({
+          width: this.width,
+          height: this.height,
+          scale, centerX, centerY,
+          maxIter: this.maxIter,
+          colorChoice: this.colorChoice
+        }).then(imageData => {
+          if (!this.animating) {
+            const ctx = this.canvasEl.getContext("2d");
+            ctx.putImageData(imageData, 0, 0);
+          }
+          return imageData;
+        });
       }
 
       processMarquee(rect) {
@@ -491,12 +492,14 @@
           prevState: { centerX: oldCenter.x, centerY: oldCenter.y, scale: oldScale },
           A, B, snapshot
         });
-        this.computeFractal(newScale, targetCenter.x, targetCenter.y);
+        // Instead of computing here, we let animateZoomIn trigger the fractal compute.
         this.animateZoomIn(newScale, targetCenter, pivot, 600);
       }
 
       animateZoomIn(targetScale, targetCenter, fixedPoint, durationMs) {
         this.animating = true;
+        // Start fractal computation concurrently.
+        const fractalPromise = this.computeAndRender(targetScale, targetCenter.x, targetCenter.y);
         const oldScale = this.scale;
         const oldCenter = { x: this.centerX, y: this.centerY };
         const canvasCenter = { x: this.width / 2, y: this.height / 2 };
@@ -511,6 +514,7 @@
         tempCanvas.getContext("2d").drawImage(this.canvasEl, 0, 0);
         const startTime = performance.now();
         const ctx = this.canvasEl.getContext("2d");
+
         const animateFrame = now => {
           let t = (now - startTime) / durationMs;
           if (t > 1) t = 1;
@@ -523,19 +527,38 @@
           if (t < 1) {
             requestAnimationFrame(animateFrame);
           } else {
+            // Finalize zoom-in state.
             this.centerX = targetCenter.x;
             this.centerY = targetCenter.y;
             this.scale = targetScale;
             this.animating = false;
             this.updateURL();
-            if (this.computedImageData) {
-              ctx.putImageData(this.computedImageData, 0, 0);
-            } else {
-              this.computeFractal();
-            }
+            // When fractal compute completes, update the canvas.
+            fractalPromise.then(imageData => {
+              const ctx = this.canvasEl.getContext("2d");
+              ctx.putImageData(imageData, 0, 0);
+            });
           }
         };
         requestAnimationFrame(animateFrame);
+      }
+
+      zoomOut() {
+        if (this.animating) return;
+        if (this.zoomStack.length > 0) {
+          // Use saved snapshot for zoom-out animation without triggering compute.
+          const zoomEntry = this.zoomStack.pop();
+          this.animateZoomOut(zoomEntry, 600);
+        } else {
+          const newScale = this.scale / this.zoomOutFactor;
+          if (newScale <= this.defaultScale) {
+            this.reset();
+          } else {
+            this.scale = newScale;
+            this.updateURL();
+            this.computeAndRender();
+          }
+        }
       }
 
       animateZoomOut(zoomEntry, durationMs) {
@@ -556,37 +579,15 @@
           if (t < 1) {
             requestAnimationFrame(animateFrame);
           } else {
+            // Update state without triggering a recomputation.
             this.centerX = prevState.centerX;
             this.centerY = prevState.centerY;
             this.scale = prevState.scale;
             this.animating = false;
             this.updateURL();
-            if (this.computedImageData) {
-              ctx.putImageData(this.computedImageData, 0, 0);
-            } else {
-              this.computeFractal();
-            }
           }
         };
         requestAnimationFrame(animateFrame);
-      }
-
-      zoomOut() {
-        if (this.animating) return;
-        if (this.zoomStack.length > 0) {
-          const zoomEntry = this.zoomStack.pop();
-          this.computeFractal(zoomEntry.prevState.scale, zoomEntry.prevState.centerX, zoomEntry.prevState.centerY);
-          this.animateZoomOut(zoomEntry, 600);
-        } else {
-          const newScale = this.scale / this.zoomOutFactor;
-          if (newScale <= this.defaultScale) {
-            this.reset();
-          } else {
-            this.scale = newScale;
-            this.updateURL();
-            this.computeFractal();
-          }
-        }
       }
 
       reset() {
@@ -595,7 +596,7 @@
         this.centerX = this.defaultCenterX;
         this.centerY = this.defaultCenterY;
         this.scale = this.defaultScale;
-        this.computeFractal();
+        this.computeAndRender();
         this.updateURL();
       }
 
@@ -614,7 +615,7 @@
         document.body.removeChild(link);
       }
     }
-    
+
     window.app = new App(MandelbrotExplorer, "app");
   </script>
 </body>
