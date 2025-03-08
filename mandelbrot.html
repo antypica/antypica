@@ -538,7 +538,6 @@
       colorChoice = 24.2;
       animating = false;
       zoomOutFactor = 2;
-      urlLoaded = false;
 
       offscreenCanvas = document.createElement("canvas");
       zoomAnimationsEnabled = true;
@@ -549,23 +548,19 @@
       marquee = new Marquee();
       mandelbrotComputer = undefined;
 
-      attached() {
-        this.initFromURL();
+      attached() {        
+        setTimeout(() => this.init(), 1);
+        window.addEventListener("resize", debounce(() => this.updateLayout(), 100));
+      }
+
+      init() {
+        this.mandelbrotComputer = new MandelbrotComputer(this.offscreenCanvas);        
         this.marquee.onStart = () => this.tip.show();
         this.marquee.onEnd = rect => this.processMarquee(rect);
-        setTimeout(() => this.updateLayoutAndCompute(), 1);
-        window.addEventListener("resize", debounce(() => this.updateLayoutAndCompute(), 100));
+        this.updateLayout(() => this.initFromURL())        
       }
 
-      updateLayoutAndCompute() {
-        this.updateLayout();
-        if (!this.mandelbrotComputer) {
-          this.mandelbrotComputer = new MandelbrotComputer(this.offscreenCanvas);
-        }
-        this.computeFractal();
-      }
-
-      updateLayout() {
+      updateLayout(afterLayout) {
         this.width = window.innerWidth;
         this.height = window.innerHeight;
         this.offscreenCanvas.width  = this.width;
@@ -586,11 +581,10 @@
         this.defaultCenterY = new Decimal(defaultCenterY.toString());
         this.defaultScale   = new Decimal(computedDefaultScale.toString());
 
-        if (!this.urlLoaded) {
-          this.centerX = this.defaultCenterX;
-          this.centerY = this.defaultCenterY;
-          this.scale   = this.defaultScale;
-        }
+        if (afterLayout)
+          afterLayout()
+
+        this.computeFractal();
       }
 
       initFromURL() {
@@ -599,8 +593,12 @@
           this.centerX = new Decimal(params.get("x"));
           this.centerY = new Decimal(params.get("y"));
           this.scale   = new Decimal(params.get("z"));
-          this.urlLoaded = true;
         }
+        else {
+          this.centerX = this.defaultCenterX;
+          this.centerY = this.defaultCenterY;
+          this.scale   = this.defaultScale;        
+        }   
       }
       
       updateURL() {
@@ -612,14 +610,14 @@
           history.replaceState(null, "", window.location.pathname);
         } else {
           const params = new URLSearchParams();
-          params.set("x", this.truncateForMandelbrot(this.centerX, this.scale));
-          params.set("y", this.truncateForMandelbrot(this.centerY, this.scale));
+          params.set("x", this.truncateDecimal(this.centerX, this.scale));
+          params.set("y", this.truncateDecimal(this.centerY, this.scale));
           params.set("z", this.scale.toFixed(0));
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
       }
 
-      truncateForMandelbrot(value, scale, pixelFraction = 0.5, extraSafetyDigits = 0) {
+      truncateDecimal(value, scale, pixelFraction = 0.5, extraSafetyDigits = 0) {
         if (!value) return "0";
         if (!scale || scale.isZero()) return value.toString();
         const E = new Decimal(pixelFraction).div(scale);
