@@ -122,16 +122,6 @@
       canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
     }
 
-    // Splits a Decimal into high+low for the shader
-    function splitDecimal(dec) {
-      const threshold = new Decimal("1e15");
-      const precision = dec.abs().greaterThan(threshold) ? 21 : 15;
-      const highDec = dec.toSignificantDigits(precision);
-      const lowDec = dec.minus(highDec);
-      return { high: highDec.toNumber(), low: lowDec.toNumber() };
-    }
-
-    // The tip overlay fade in/out
     class Tip extends Component {
       element = undefined;
       tipState = "not_shown";
@@ -164,7 +154,6 @@
       }
     }
 
-    // The selection marquee
     class Marquee extends Component {
       active = false;
       startPos = { x: 0, y: 0 };
@@ -247,7 +236,6 @@
       }
     }
 
-    // The WebGL2 fractal renderer
     class MandelbrotComputer {
       gl = undefined;
       canvasEl;
@@ -257,7 +245,7 @@
       uniformLocations = {};
 
       constructor(canvasEl) {
-        this.canvasEl = canvasEl;        
+        this.canvasEl = canvasEl;
         const gl = this.canvasEl.getContext("webgl2", { preserveDrawingBuffer: true });
         if (!gl) {
           console.error("WebGL2 is not available.");
@@ -275,46 +263,35 @@
 
         const fsSource = `#version 300 es
           precision highp float;
-          uniform vec2 u_resolution;
-          uniform float u_centerXHigh;
-          uniform float u_centerXLow;
-          uniform float u_centerYHigh;
-          uniform float u_centerYLow;
-          uniform float u_scaleHigh;
-          uniform float u_scaleLow;
-          uniform int u_maxIter;
+          uniform vec2  u_resolution;
+          uniform float u_centerX;
+          uniform float u_centerY;
+          uniform float u_scale;
+          uniform int   u_maxIter;
           uniform float u_bailout;
-          uniform int u_refLength;
+          uniform int   u_refLength;
           uniform float u_colorChoice;
           uniform sampler2D u_refOrbitTex;
           out vec4 fragColor;
 
-          vec2 getFullCenter() {
-            return vec2(u_centerXHigh + u_centerXLow, u_centerYHigh + u_centerYLow);
-          }
-          float getFullScale() {
-            return u_scaleHigh + u_scaleLow;
-          }
-
           vec2 getRef(int i) {
-            float fi = float(i) + 0.5;
+            float fi  = float(i) + 0.5;
             float len = float(u_refLength);
             return texture(u_refOrbitTex, vec2(fi / len, 0.5)).rg;
           }
 
           void main() {
             vec2 coord = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
-            vec2 fullCenter = getFullCenter();
-            float fullScale = getFullScale();
 
-            // Pixel coords -> complex-plane coords
-            vec2 dc = (coord - u_resolution * 0.5) / fullScale;
+            // Convert pixel -> complex plane
+            vec2 dc = (coord - u_resolution * 0.5) / u_scale;
             vec2 dz = vec2(0.0);
 
             int refIndex = 0;
             int iteration = 0;
             int maxRefIteration = u_refLength - 1;
 
+            // Example loop with reference orbit usage
             for (int i = 0; i < 10000; i++) {
               if (iteration >= u_maxIter) break;
               vec2 refVal = getRef(refIndex);
@@ -341,6 +318,7 @@
               iteration++;
             }
 
+            // Smooth coloring
             float smoothIter = float(iteration);
             if (iteration < u_maxIter) {
               float lenz = length(getRef(refIndex) + dz);
@@ -372,18 +350,15 @@
         }
 
         this.uniformLocations = {
-          resolution:   gl.getUniformLocation(this.program, "u_resolution"),
-          centerXHigh:  gl.getUniformLocation(this.program, "u_centerXHigh"),
-          centerXLow:   gl.getUniformLocation(this.program, "u_centerXLow"),
-          centerYHigh:  gl.getUniformLocation(this.program, "u_centerYHigh"),
-          centerYLow:   gl.getUniformLocation(this.program, "u_centerYLow"),
-          scaleHigh:    gl.getUniformLocation(this.program, "u_scaleHigh"),
-          scaleLow:     gl.getUniformLocation(this.program, "u_scaleLow"),
-          maxIter:      gl.getUniformLocation(this.program, "u_maxIter"),
-          bailout:      gl.getUniformLocation(this.program, "u_bailout"),
-          refLength:    gl.getUniformLocation(this.program, "u_refLength"),
-          colorChoice:  gl.getUniformLocation(this.program, "u_colorChoice"),
-          refOrbitTex:  gl.getUniformLocation(this.program, "u_refOrbitTex")
+          resolution:  gl.getUniformLocation(this.program, "u_resolution"),
+          centerX:     gl.getUniformLocation(this.program, "u_centerX"),
+          centerY:     gl.getUniformLocation(this.program, "u_centerY"),
+          scale:       gl.getUniformLocation(this.program, "u_scale"),
+          maxIter:     gl.getUniformLocation(this.program, "u_maxIter"),
+          bailout:     gl.getUniformLocation(this.program, "u_bailout"),
+          refLength:   gl.getUniformLocation(this.program, "u_refLength"),
+          colorChoice: gl.getUniformLocation(this.program, "u_colorChoice"),
+          refOrbitTex: gl.getUniformLocation(this.program, "u_refOrbitTex")
         };
       }
 
@@ -430,7 +405,6 @@
           z_re = new_re;
           z_im = new_im;
           refOrbit.push({ re: parseFloat(z_re.toString()), im: parseFloat(z_im.toString()) });
-
           if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) {
             break;
           }
@@ -457,7 +431,7 @@
         return len;
       }
 
-      computeFractal(centerXDec, centerYDec, scaleDec, maxIter, colorChoice, orbitX, orbitY, orbitScale) {
+      computeFractal(centerX, centerY, scale, maxIter, colorChoice, orbitX, orbitY) {
         const gl = this.gl;
         const width  = this.canvasEl.width;
         const height = this.canvasEl.height;
@@ -486,17 +460,16 @@
         const refOrbit = this.computeReferenceOrbit(maxIter, orbitX, orbitY);
         const refLen   = this.updateRefOrbitTexture(refOrbit);
 
-        const centerXSplit = splitDecimal(centerXDec);
-        const centerYSplit = splitDecimal(centerYDec);
-        const scaleSplit   = splitDecimal(scaleDec);
+        // --- Convert from Decimal/Number to single float
+        const centerXFloat = parseFloat(centerX.toString());
+        const centerYFloat = parseFloat(centerY.toString());
+        const scaleFloat   = parseFloat(scale.toString());
 
+        // Set uniforms
         gl.uniform2f (this.uniformLocations.resolution,  width, height);
-        gl.uniform1f (this.uniformLocations.centerXHigh, centerXSplit.high);
-        gl.uniform1f (this.uniformLocations.centerXLow,  centerXSplit.low);
-        gl.uniform1f (this.uniformLocations.centerYHigh, centerYSplit.high);
-        gl.uniform1f (this.uniformLocations.centerYLow,  centerYSplit.low);
-        gl.uniform1f (this.uniformLocations.scaleHigh,   scaleSplit.high);
-        gl.uniform1f (this.uniformLocations.scaleLow,    scaleSplit.low);
+        gl.uniform1f (this.uniformLocations.centerX,     centerXFloat);
+        gl.uniform1f (this.uniformLocations.centerY,     centerYFloat);
+        gl.uniform1f (this.uniformLocations.scale,       scaleFloat);
         gl.uniform1i (this.uniformLocations.maxIter,     maxIter);
         gl.uniform1f (this.uniformLocations.bailout,     4.0);
         gl.uniform1i (this.uniformLocations.refLength,   refLen);
