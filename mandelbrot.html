@@ -108,7 +108,7 @@
     import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
     import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
 
-    Decimal.set({ precision: 40 });
+    Decimal.set({ precision: 38 });
 
     function debounce(fn, ms) {
       let t;
@@ -595,7 +595,38 @@
         }
       }
 
+      truncateForMandelbrot(value, scale, pixelFraction = 0.5, extraSafetyDigits = 0) {
+        // 1) Guard: if scale is missing or 0, just return value.toString().
+        if (!value) return "0";
+        if (!scale || scale.isZero()) {
+          return value.toString();
+        }
+
+        // 2) Compute error tolerance E = pixelFraction * (1 / scale).
+        const E = new Decimal(pixelFraction).div(scale);
+
+        if (E.greaterThanOrEqualTo(1)) {
+          // Not zoomed in enough to worry about decimals
+          return value.toFixed(0);
+        }
+
+        // 3) Use ln(...)/ln(10) instead of log10():
+        const absVal = value.abs();
+        // If your decimal library lacks Decimal.LOG10, use Math.log(10)
+        const M = absVal.ln().div(Math.log(10)).floor();
+
+        const logEover5 = E.div(5).ln().div(Math.log(10));
+        let needed = M.sub(logEover5).ceil();
+        needed = needed.add(extraSafetyDigits);
+        if (needed.lt(1)) {
+          needed = new Decimal(1);
+        }
+
+        return value.toSignificantDigits(needed.toNumber()).toString();
+      }
+
       updateURL() {
+        // If we’re at the default view, remove query params
         if (
           this.centerX.equals(this.defaultCenterX) &&
           this.centerY.equals(this.defaultCenterY) &&
@@ -604,9 +635,9 @@
           history.replaceState(null, "", window.location.pathname);
         } else {
           const params = new URLSearchParams();
-          params.set("x", this.centerX.toString());
-          params.set("y", this.centerY.toString());
-          params.set("z", this.scale.toString());
+          params.set("x", this.truncateForMandelbrot(this.centerX, this.scale));
+          params.set("y", this.truncateForMandelbrot(this.centerY, this.scale));
+          params.set("z", this.scale.toFixed(0));
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
       }
@@ -649,7 +680,6 @@
         mainCtx.drawImage(this.offscreenCanvas, 0, 0);
       }
 
-      // We adopt the “zoomStack” approach from code base B:
       processMarquee(rect) {
         const { left, top, width, height } = rect;
         if (width < 5 || height < 5) return;
@@ -711,7 +741,6 @@
         }
       }
 
-      // B’s approach to zoom in
       animateZoomIn(zoomEntry, durationMs) {
         this.animating = true;
 
@@ -732,7 +761,6 @@
         const prevState = zoomEntry.prevState;
         const s_final = targetState.scale.dividedBy(prevState.scale).toNumber();
 
-        // The offset T
         const cX = new Decimal(this.width).dividedBy(2);
         const cY = new Decimal(this.height).dividedBy(2);
         const T_dec_x = cX.times(new Decimal(1).minus(s_final))
@@ -762,7 +790,6 @@
         };
       }
 
-      // B’s approach to zoom out
       animateZoomOut(zoomEntry, durationMs) {
         this.animating = true;
         this.tip.hide();
@@ -799,7 +826,6 @@
         };
       }
 
-      // The single animation routine from B
       animateTransform(transformFunc, durationMs, snapshotImage, onComplete) {
         const mainCtx = this.canvasEl.getContext("2d");
         const startTime = performance.now();
