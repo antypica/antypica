@@ -218,7 +218,6 @@
         const top = Math.min(this.startPos.y, this.currentPos.y);
         const width = Math.abs(this.currentPos.x - this.startPos.x);
         const height = Math.abs(this.currentPos.y - this.startPos.y);
-
         ctx.save();
         ctx.strokeStyle = "#444";
         ctx.lineWidth = 2;
@@ -228,11 +227,12 @@
       }
 
       getRect() {
-        const left = Math.min(this.startPos.x, this.currentPos.x);
-        const top = Math.min(this.startPos.y, this.currentPos.y);
-        const width = Math.abs(this.currentPos.x - this.startPos.x);
-        const height = Math.abs(this.currentPos.y - this.startPos.y);
-        return { left, top, width, height };
+        return {
+          left: Math.min(this.startPos.x, this.currentPos.x),
+          top: Math.min(this.startPos.y, this.currentPos.y),
+          width: Math.abs(this.currentPos.x - this.startPos.x),
+          height: Math.abs(this.currentPos.y - this.startPos.y)
+        };
       }
     }
 
@@ -244,26 +244,34 @@
       program = null;
       uniformLocations = {};
 
+      // Low-res framebuffer objects (for lowQuality mode)
+      lowResFramebuffer = null;
+      lowResTexture = null;
+
       constructor(canvasEl) {
         this.canvasEl = canvasEl;
-        const gl = this.canvasEl.getContext("webgl2", { preserveDrawingBuffer: true });
+        const gl = this.canvasEl.getContext("webgl2", { preserveDrawingBuffer: true, antialias: false });
         if (!gl) {
           console.error("WebGL2 is not available.");
           alert("WebGL2 is not available.");
           return;
         }
         this.gl = gl;
+        this.initShaders();
+      }
 
+      initShaders() {
+        const gl = this.gl;
         const vsSource = `#version 300 es
           in vec2 a_position;
           void main() {
             gl_Position = vec4(a_position, 0.0, 1.0);
           }
         `;
-
         const fsSource = `#version 300 es
           precision highp float;
           uniform vec2  u_resolution;
+          uniform vec2  u_fullResolution;
           uniform float u_centerX;
           uniform float u_centerY;
           uniform float u_scale;
@@ -272,6 +280,7 @@
           uniform int   u_refLength;
           uniform float u_colorChoice;
           uniform sampler2D u_refOrbitTex;
+          uniform int u_lowQuality;
           out vec4 fragColor;
 
           vec2 getRef(int i) {
@@ -281,36 +290,34 @@
           }
 
           void main() {
-            vec2 coord = vec2(gl_FragCoord.x, u_resolution.y - gl_FragCoord.y);
+            vec2 coord;
+            if(u_lowQuality == 1) {
+              vec2 lowResCoord = vec2(gl_FragCoord.x + 0.5, gl_FragCoord.y + 0.5);
+              lowResCoord.y = u_resolution.y - lowResCoord.y;
+              coord = lowResCoord * (u_fullResolution / u_resolution) - vec2(0.5, 0.5);
+            } else {
+              coord = vec2(gl_FragCoord.x, u_fullResolution.y - gl_FragCoord.y);
+            }
 
-            // Convert pixel -> complex plane
-            vec2 dc = (coord - u_resolution * 0.5) / u_scale;
+            vec2 dc = (coord - u_fullResolution * 0.5) / u_scale;
             vec2 dz = vec2(0.0);
-
             int refIndex = 0;
             int iteration = 0;
             int maxRefIteration = u_refLength - 1;
 
-            // Example loop with reference orbit usage
             for (int i = 0; i < 10000; i++) {
               if (iteration >= u_maxIter) break;
               vec2 refVal = getRef(refIndex);
-
-              // Combine z^2 + c with the reference orbit
               vec2 term1 = vec2(
                 2.0 * (dz.x * refVal.x - dz.y * refVal.y),
                 2.0 * (dz.x * refVal.y + dz.y * refVal.x)
               );
               vec2 term2 = vec2(dz.x * dz.x - dz.y * dz.y, 2.0 * dz.x * dz.y);
               dz = term1 + term2 + dc;
-
               refIndex++;
               if (refIndex >= u_refLength) break;
-
               vec2 z = getRef(refIndex) + dz;
-              if (dot(z, z) > u_bailout) { 
-                break; 
-              }
+              if (dot(z, z) > u_bailout) break;
               if (length(z) < length(dz) || refIndex == maxRefIteration) {
                 dz = z;
                 refIndex = 0;
@@ -318,47 +325,42 @@
               iteration++;
             }
 
-            // Smooth coloring
             float smoothIter = float(iteration);
             if (iteration < u_maxIter) {
               float lenz = length(getRef(refIndex) + dz);
               smoothIter += 1.0 - log(log(lenz)) / log(2.0);
             }
-
             float invColor = 1.0 / u_colorChoice;
             int alt_u_maxIter = 1200;
             float cval = (smoothIter - float(alt_u_maxIter)) * invColor;
-
             float r = floor(255.0 * (0.5 - cos(cval) / 2.0));
             float g = floor(255.0 * (0.5 - cos(1.1214 * cval) / 2.0));
             float b = floor(255.0 * (0.5 - cos(0.8 * cval) / 2.0));
 
-            if (iteration >= u_maxIter) {
-              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            } else {
-              fragColor = vec4(r / 255.0, g / 255.0, b / 255.0, 1.0);
-            }
+            fragColor = (iteration >= u_maxIter)
+                        ? vec4(0.0, 0.0, 0.0, 1.0)
+                        : vec4(r / 255.0, g / 255.0, b / 255.0, 1.0);
           }
         `;
-
-        const vertexShader   = this.compileShader(gl.VERTEX_SHADER, vsSource);
+        const vertexShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
         const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, fsSource);
         this.program = this.createProgram(vertexShader, fragmentShader);
         if (!this.program) {
           console.error("Failed to create shader program.");
           return;
         }
-
         this.uniformLocations = {
-          resolution:  gl.getUniformLocation(this.program, "u_resolution"),
-          centerX:     gl.getUniformLocation(this.program, "u_centerX"),
-          centerY:     gl.getUniformLocation(this.program, "u_centerY"),
-          scale:       gl.getUniformLocation(this.program, "u_scale"),
-          maxIter:     gl.getUniformLocation(this.program, "u_maxIter"),
-          bailout:     gl.getUniformLocation(this.program, "u_bailout"),
-          refLength:   gl.getUniformLocation(this.program, "u_refLength"),
-          colorChoice: gl.getUniformLocation(this.program, "u_colorChoice"),
-          refOrbitTex: gl.getUniformLocation(this.program, "u_refOrbitTex")
+          resolution:      gl.getUniformLocation(this.program, "u_resolution"),
+          fullResolution:  gl.getUniformLocation(this.program, "u_fullResolution"),
+          centerX:         gl.getUniformLocation(this.program, "u_centerX"),
+          centerY:         gl.getUniformLocation(this.program, "u_centerY"),
+          scale:           gl.getUniformLocation(this.program, "u_scale"),
+          maxIter:         gl.getUniformLocation(this.program, "u_maxIter"),
+          bailout:         gl.getUniformLocation(this.program, "u_bailout"),
+          refLength:       gl.getUniformLocation(this.program, "u_refLength"),
+          colorChoice:     gl.getUniformLocation(this.program, "u_colorChoice"),
+          refOrbitTex:     gl.getUniformLocation(this.program, "u_refOrbitTex"),
+          lowQuality:      gl.getUniformLocation(this.program, "u_lowQuality")
         };
       }
 
@@ -379,11 +381,9 @@
         const gl = this.gl;
         const program = gl.createProgram();
         if (!program || !vs || !fs) return null;
-
         gl.attachShader(program, vs);
         gl.attachShader(program, fs);
         gl.linkProgram(program);
-
         if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
           console.error("Program link error:", gl.getProgramInfoLog(program));
           gl.deleteProgram(program);
@@ -394,20 +394,14 @@
 
       computeReferenceOrbit(maxIter, centerXDec, centerYDec) {
         const bailout = new Decimal(4);
-        let refOrbit = [];
-        let z_re = new Decimal(0);
-        let z_im = new Decimal(0);
-        refOrbit.push({ re: 0, im: 0 });
-
+        let refOrbit = [{ re: 0, im: 0 }];
+        let z_re = new Decimal(0), z_im = new Decimal(0);
         for (let i = 0; i < maxIter; i++) {
           const new_re = z_re.mul(z_re).sub(z_im.mul(z_im)).add(centerXDec);
           const new_im = z_re.mul(z_im).mul(2).add(centerYDec);
-          z_re = new_re;
-          z_im = new_im;
+          z_re = new_re; z_im = new_im;
           refOrbit.push({ re: parseFloat(z_re.toString()), im: parseFloat(z_im.toString()) });
-          if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) {
-            break;
-          }
+          if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) break;
         }
         return refOrbit;
       }
@@ -416,10 +410,10 @@
         const gl = this.gl;
         const len = refOrbit.length;
         const data = new Float32Array(len * 2);
-        for (let i = 0; i < len; i++) {
-          data[2 * i]     = refOrbit[i].re;
-          data[2 * i + 1] = refOrbit[i].im;
-        }
+        refOrbit.forEach((pt, i) => {
+          data[2 * i] = pt.re;
+          data[2 * i + 1] = pt.im;
+        });
         if (!this.refOrbitTexture) {
           this.refOrbitTexture = gl.createTexture();
         }
@@ -427,19 +421,12 @@
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, len, 1, 0, gl.RG, gl.FLOAT, data);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
         return len;
       }
 
-      computeFractal(centerX, centerY, scale, maxIter, colorChoice, orbitX, orbitY) {
+      // Sets up the quad buffer if not already done.
+      setupQuadBuffer() {
         const gl = this.gl;
-        const width  = this.canvasEl.width;
-        const height = this.canvasEl.height;
-
-        gl.viewport(0, 0, width, height);
-        gl.useProgram(this.program);
-
-        // Create the quad if needed
         if (!this.quadBuffer) {
           this.quadBuffer = gl.createBuffer();
           gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
@@ -451,35 +438,89 @@
         } else {
           gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
         }
-
         const posLoc = gl.getAttribLocation(this.program, "a_position");
         gl.enableVertexAttribArray(posLoc);
         gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+      }
 
-        // Precompute orbit from center
-        const refOrbit = this.computeReferenceOrbit(maxIter, orbitX, orbitY);
-        const refLen   = this.updateRefOrbitTexture(refOrbit);
-
-        // --- Convert from Decimal/Number to single float
-        const centerXFloat = parseFloat(centerX.toString());
-        const centerYFloat = parseFloat(centerY.toString());
-        const scaleFloat   = parseFloat(scale.toString());
-
-        // Set uniforms
-        gl.uniform2f (this.uniformLocations.resolution,  width, height);
-        gl.uniform1f (this.uniformLocations.centerX,     centerXFloat);
-        gl.uniform1f (this.uniformLocations.centerY,     centerYFloat);
-        gl.uniform1f (this.uniformLocations.scale,       scaleFloat);
-        gl.uniform1i (this.uniformLocations.maxIter,     maxIter);
-        gl.uniform1f (this.uniformLocations.bailout,     4.0);
-        gl.uniform1i (this.uniformLocations.refLength,   refLen);
-        gl.uniform1f (this.uniformLocations.colorChoice, colorChoice);
-
+      // Applies uniforms and draws the scene.
+      renderScene(resWidth, resHeight, fullWidth, fullHeight, centerX, centerY, scale, maxIter, colorChoice, refLen, lowQualityFlag) {
+        const gl = this.gl;
+        gl.useProgram(this.program);
+        gl.uniform2f(this.uniformLocations.resolution, resWidth, resHeight);
+        gl.uniform2f(this.uniformLocations.fullResolution, fullWidth, fullHeight);
+        gl.uniform1f(this.uniformLocations.centerX, centerX);
+        gl.uniform1f(this.uniformLocations.centerY, centerY);
+        gl.uniform1f(this.uniformLocations.scale, scale);
+        gl.uniform1i(this.uniformLocations.maxIter, maxIter);
+        gl.uniform1f(this.uniformLocations.bailout, 4.0);
+        gl.uniform1i(this.uniformLocations.refLength, refLen);
+        gl.uniform1f(this.uniformLocations.colorChoice, colorChoice);
+        gl.uniform1i(this.uniformLocations.lowQuality, lowQualityFlag);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this.refOrbitTexture);
         gl.uniform1i(this.uniformLocations.refOrbitTex, 0);
-
         gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      computeFractal(centerX, centerY, scale, maxIter, colorChoice, lowQuality = false) {
+        const gl = this.gl;
+        const fullWidth = this.canvasEl.width;
+        const fullHeight = this.canvasEl.height;
+        let resWidth = fullWidth, resHeight = fullHeight;
+        let lowQualityFlag = 0;
+
+        // If lowQuality is requested, render to a reduced resolution.
+        if (lowQuality) {
+          resWidth = Math.max(1, Math.floor(fullWidth / 3));
+          resHeight = Math.max(1, Math.floor(fullHeight / 3));
+          lowQualityFlag = 1;
+          if (!this.lowResFramebuffer) {
+            this.lowResFramebuffer = gl.createFramebuffer();
+            this.lowResTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, this.lowResTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, resWidth, resHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowResFramebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lowResTexture, 0);
+          } else {
+            gl.bindTexture(gl.TEXTURE_2D, this.lowResTexture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, resWidth, resHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowResFramebuffer);
+          }
+          gl.viewport(0, 0, resWidth, resHeight);
+        } else {
+          gl.viewport(0, 0, fullWidth, fullHeight);
+        }
+
+        this.setupQuadBuffer();
+
+        // Compute and update reference orbit.
+        const refOrbit = this.computeReferenceOrbit(maxIter, centerX, centerY);
+        const refLen = this.updateRefOrbitTexture(refOrbit);
+
+        // Convert Decimal values to float.
+        const centerXFloat = parseFloat(centerX.toString());
+        const centerYFloat = parseFloat(centerY.toString());
+        const scaleFloat = parseFloat(scale.toString());
+
+        this.renderScene(resWidth, resHeight, fullWidth, fullHeight,
+          centerXFloat, centerYFloat, scaleFloat, maxIter, colorChoice, refLen, lowQualityFlag);
+
+        if (lowQuality) {
+          // Blit the low-res framebuffer to the main canvas.
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.lowResFramebuffer);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+          gl.blitFramebuffer(
+            0, 0, resWidth, resHeight,
+            0, 0, fullWidth, fullHeight,
+            gl.COLOR_BUFFER_BIT,
+            gl.LINEAR
+          );
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.viewport(0, 0, fullWidth, fullHeight);
+        }
       }
     }
 
@@ -499,51 +540,45 @@
       zoomOutFactor = 2;
       urlLoaded = false;
 
-      tip = new Tip();
-      marquee = new Marquee();
-      mandelbrotComputer = undefined;
-
       offscreenCanvas = document.createElement("canvas");
       zoomAnimationsEnabled = true;
       zoomStack = [];
+      zoomDuration = 600;
+
+      tip = new Tip();
+      marquee = new Marquee();
+      mandelbrotComputer = undefined;
 
       attached() {
         this.initFromURL();
         this.marquee.onStart = () => this.tip.show();
         this.marquee.onEnd = rect => this.processMarquee(rect);
-
-        // Once everything is attached, do a layout+render
-        setTimeout(() => { this.updateLayoutAndCompute(); }, 1);
-        window.addEventListener("resize", debounce(() => { this.updateLayoutAndCompute(); }, 100));
+        setTimeout(() => this.updateLayoutAndCompute(), 1);
+        window.addEventListener("resize", debounce(() => this.updateLayoutAndCompute(), 100));
       }
 
       updateLayoutAndCompute() {
         this.updateLayout();
         if (!this.mandelbrotComputer) {
-          // Create fractal engine on the “offscreen” canvas
           this.mandelbrotComputer = new MandelbrotComputer(this.offscreenCanvas);
         }
         this.computeFractal();
       }
 
       updateLayout() {
-        const w = (this.width  = window.innerWidth);
-        const h = (this.height = window.innerHeight);
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        this.offscreenCanvas.width  = this.width;
+        this.offscreenCanvas.height = this.height;
+        this.canvasEl.width  = this.width;
+        this.canvasEl.height = this.height;
+        this.marquee.canvasEl.width  = this.width;
+        this.marquee.canvasEl.height = this.height;
 
-        // Size both canvases
-        this.offscreenCanvas.width  = w;
-        this.offscreenCanvas.height = h;
-
-        this.canvasEl.width  = w;
-        this.canvasEl.height = h;
-        this.marquee.canvasEl.width  = w;
-        this.marquee.canvasEl.height = h;
-
-        // Default region: -2.5..1 in X, -1..1 in Y
         const minX = -2.5, maxX = 1.0, minY = -1.0, maxY = 1.0;
-        const computedDefaultScale = (w / h >= (maxX - minX) / (maxY - minY))
-          ? (h / (maxY - minY) * 0.8)
-          : (w / (maxX - minX));
+        const computedDefaultScale = (this.width / this.height >= (maxX - minX) / (maxY - minY))
+          ? (this.height / (maxY - minY) * 0.8)
+          : (this.width / (maxX - minX));
         const defaultCenterX = (minX + maxX) / 2;
         const defaultCenterY = 0;
 
@@ -567,39 +602,8 @@
           this.urlLoaded = true;
         }
       }
-
-      truncateForMandelbrot(value, scale, pixelFraction = 0.5, extraSafetyDigits = 0) {
-        // 1) Guard: if scale is missing or 0, just return value.toString().
-        if (!value) return "0";
-        if (!scale || scale.isZero()) {
-          return value.toString();
-        }
-
-        // 2) Compute error tolerance E = pixelFraction * (1 / scale).
-        const E = new Decimal(pixelFraction).div(scale);
-
-        if (E.greaterThanOrEqualTo(1)) {
-          // Not zoomed in enough to worry about decimals
-          return value.toFixed(0);
-        }
-
-        // 3) Use ln(...)/ln(10) instead of log10():
-        const absVal = value.abs();
-        // If your decimal library lacks Decimal.LOG10, use Math.log(10)
-        const M = absVal.ln().div(Math.log(10)).floor();
-
-        const logEover5 = E.div(5).ln().div(Math.log(10));
-        let needed = M.sub(logEover5).ceil();
-        needed = needed.add(extraSafetyDigits);
-        if (needed.lt(1)) {
-          needed = new Decimal(1);
-        }
-
-        return value.toSignificantDigits(needed.toNumber()).toString();
-      }
-
+      
       updateURL() {
-        // If we’re at the default view, remove query params
         if (
           this.centerX.equals(this.defaultCenterX) &&
           this.centerY.equals(this.defaultCenterY) &&
@@ -615,9 +619,21 @@
         }
       }
 
+      truncateForMandelbrot(value, scale, pixelFraction = 0.5, extraSafetyDigits = 0) {
+        if (!value) return "0";
+        if (!scale || scale.isZero()) return value.toString();
+        const E = new Decimal(pixelFraction).div(scale);
+        if (E.greaterThanOrEqualTo(1)) return value.toFixed(0);
+        const absVal = value.abs();
+        const M = absVal.ln().div(Math.log(10)).floor();
+        const logEover5 = E.div(5).ln().div(Math.log(10));
+        let needed = M.sub(logEover5).ceil().plus(extraSafetyDigits);
+        if (needed.lt(1)) needed = new Decimal(1);
+        return value.toSignificantDigits(needed.toNumber()).toString();
+      }
+
       toggleMode() {
         if (this.animating) return;
-        
         this.update(() => {
           this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
           this.maxIter = this.zoomAnimationsEnabled ? 1200 : 9600;
@@ -625,29 +641,13 @@
         });
       }
 
-      computeFractal(scaleOverride, cxOverride, cyOverride) {
+      computeFractal(scaleOverride, cxOverride, cyOverride, lowQuality = false) {
         if (scaleOverride !== undefined && cxOverride !== undefined && cyOverride !== undefined) {
           this.scale   = new Decimal(scaleOverride.toString());
           this.centerX = new Decimal(cxOverride.toString());
           this.centerY = new Decimal(cyOverride.toString());
         }
-        this.mandelbrotComputer.computeFractal(
-          this.centerX,
-          this.centerY,
-          this.scale,
-          this.maxIter,
-          this.colorChoice,
-          // For the reference orbit, we’ll just use the same coords:
-          this.centerX,
-          this.centerY,
-          this.scale
-        );
-        if (!this.animating) {
-          this.copyOffscreenToMain();
-        }
-      }
-
-      copyOffscreenToMain() {
+        this.mandelbrotComputer.computeFractal(this.centerX, this.centerY, this.scale, this.maxIter, this.colorChoice, lowQuality);
         const mainCtx = this.canvasEl.getContext("2d");
         mainCtx.clearRect(0, 0, this.width, this.height);
         mainCtx.drawImage(this.offscreenCanvas, 0, 0);
@@ -658,15 +658,12 @@
         if (width < 5 || height < 5) return;
         this.tip.hide();
 
-        // Convert pixel measurements to Decimal, then transform to fractal space
         const canvasCenterX = new Decimal(this.width).dividedBy(2);
         const canvasCenterY = new Decimal(this.height).dividedBy(2);
-
         const x1 = new Decimal(left.toString());
         const y1 = new Decimal(top.toString());
-        // Use Decimal addition as well:
-        const x2 = new Decimal(left.toString()).plus(new Decimal(width.toString()));
-        const y2 = new Decimal(top.toString()).plus(new Decimal(height.toString()));
+        const x2 = x1.plus(new Decimal(width.toString()));
+        const y2 = y1.plus(new Decimal(height.toString()));
 
         const fractalX1 = this.centerX.plus(x1.minus(canvasCenterX).dividedBy(this.scale));
         const fractalY1 = this.centerY.plus(y1.minus(canvasCenterY).dividedBy(this.scale));
@@ -679,49 +676,21 @@
         const newScale = new Decimal(this.width).dividedBy(deltaX);
 
         if (this.zoomAnimationsEnabled) {
-          const prevState = {
-            centerX: this.centerX,
-            centerY: this.centerY,
-            scale:   this.scale
-          };
-          const targetState = {
-            centerX: newCenterX,
-            centerY: newCenterY,
-            scale:   newScale
-          };
+          const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
+          const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
 
-          // Instead of converting toNumber() too early, keep them in Decimal:
-          const oldCx = prevState.centerX;
-          const oldCy = prevState.centerY;
-          const newCx = targetState.centerX;
-          const newCy = targetState.centerY;
-          const oldS  = prevState.scale;
-          const newS  = newScale;
-
-          // A = (final scale) / (initial scale)
-          const A_dec = newS.dividedBy(oldS);
-
-          // Canvas midpoint as Decimal
+          const A_dec = newScale.dividedBy(this.centerX);  // Using current scale
           const halfW_dec = new Decimal(this.width).dividedBy(2);
           const halfH_dec = new Decimal(this.height).dividedBy(2);
-
-          // B = (oldC - newC)*newS + (canvasMid * (1 - A))
-          const BxDec = oldCx.minus(newCx).times(newS)
+          const BxDec = this.centerX.minus(newCenterX).times(newScale)
             .plus(halfW_dec.times(new Decimal(1).minus(A_dec)));
-          const ByDec = oldCy.minus(newCy).times(newS)
+          const ByDec = this.centerY.minus(newCenterY).times(newScale)
             .plus(halfH_dec.times(new Decimal(1).minus(A_dec)));
 
-          const zoomEntry = {
-            prevState,
-            targetState,
-            A: A_dec,
-            B: { x: BxDec, y: ByDec }
-          };
+          const zoomEntry = { prevState, targetState, A: A_dec, B: { x: BxDec, y: ByDec } };
           this.zoomStack.push(zoomEntry);
-          this.animateZoomIn(zoomEntry, 600);
-
+          this.animateZoomIn(zoomEntry);
         } else {
-          // Deep mode => no animation
           this.centerX = newCenterX;
           this.centerY = newCenterY;
           this.scale   = newScale;
@@ -730,168 +699,61 @@
         }
       }
 
-      animateZoomIn(zoomEntry, durationMs) {
+      animateZoom(fromState, toState, durationMs, onComplete) {
         this.animating = true;
-
-        // Snapshot the current offscreen
-        const snapshotCanvas = document.createElement("canvas");
-        snapshotCanvas.width = this.width;
-        snapshotCanvas.height = this.height;
-        snapshotCanvas.getContext("2d").drawImage(this.offscreenCanvas, 0, 0);
-
-        const snapshotImage = new Image();
-        snapshotImage.src = snapshotCanvas.toDataURL("image/png");
-
-        // Precompute the fractal at the new target so it’s ready
-        const { targetState, prevState } = zoomEntry;
-        this.computeFractal(
-          targetState.scale,
-          targetState.centerX,
-          targetState.centerY
-        );
-
-        // We'll do the final transform in decimal,
-        // then convert to number at the last step.
-        const A_dec = zoomEntry.A;  // already the ratio newScale / oldScale
-        const B_dec = zoomEntry.B;
-
-        snapshotImage.onload = () => {
-          const transformFunc = t => {
-            // Convert 't' to decimal, then compute scale and translation in decimal
-            const t_dec = new Decimal(t.toString());
-
-            // scaleVal = 1 + t*(A - 1)  because A = newScale/oldScale
-            // (When t=0 => scale=1, t=1 => scale=A)
-            const scale_dec = new Decimal(1).plus( t_dec.times(A_dec.minus(1)) );
-            const scaleNum = scale_dec.toNumber();
-
-            // translation is a fraction t of B
-            const transX_num = t_dec.times(B_dec.x).toNumber();
-            const transY_num = t_dec.times(B_dec.y).toNumber();
-
-            return {
-              scale: scaleNum,
-              translate: { x: transX_num, y: transY_num }
-            };
-          };
-
-          this.animateTransform(transformFunc, durationMs, snapshotImage, () => {
-            // finalize fractal coords in decimal
-            this.centerX = targetState.centerX;
-            this.centerY = targetState.centerY;
-            this.scale   = targetState.scale;
-            this.updateURL();
-            this.copyOffscreenToMain();
-            this.animating = false;
-          });
-        };
-      }
-
-      animateZoomOut(zoomEntry, durationMs) {
-        this.animating = true;
-        this.tip.hide();
-
-        // Precompute fractal for the “previous state”
-        const prevState = zoomEntry.prevState;
-        this.computeFractal(prevState.scale, prevState.centerX, prevState.centerY);
-
-        const snapshotCanvas = document.createElement("canvas");
-        snapshotCanvas.width = this.width;
-        snapshotCanvas.height = this.height;
-        snapshotCanvas.getContext("2d").drawImage(this.offscreenCanvas, 0, 0);
-
-        const snapshotImage = new Image();
-        snapshotImage.src = snapshotCanvas.toDataURL("image/png");
-
-        // We have A (scale ratio) and B from zoomEntry
-        // Here we move from scale=A back down to 1,
-        // so scale(t) = A + t*(1 - A) = A + t - A*t
-        const A_dec = zoomEntry.A;   // Decimal
-        const B_dec = zoomEntry.B;   // {x, y} also Decimal
-
-        snapshotImage.onload = () => {
-          const transformFunc = t => {
-            const t_dec = new Decimal(t.toString());
-            // scaleVal = A + t*(1 - A)
-            const scale_dec = A_dec.plus(
-              t_dec.times(new Decimal(1).minus(A_dec))
-            );
-            const scaleNum = scale_dec.toNumber();
-
-            // translation is B*(1 - t)
-            const oneMinusT = new Decimal(1).minus(t_dec);
-            const transX_num = B_dec.x.times(oneMinusT).toNumber();
-            const transY_num = B_dec.y.times(oneMinusT).toNumber();
-
-            return {
-              scale: scaleNum,
-              translate: { x: transX_num, y: transY_num }
-            };
-          };
-
-          this.animateTransform(transformFunc, durationMs, snapshotImage, () => {
-            // finalize fractal coords in decimal
-            this.centerX = prevState.centerX;
-            this.centerY = prevState.centerY;
-            this.scale   = prevState.scale;
-            this.updateURL();
-            this.copyOffscreenToMain();
-            this.animating = false;
-          });
-        };
-      }
-
-      animateTransform(transformFunc, durationMs, snapshotImage, onComplete) {
-        const mainCtx = this.canvasEl.getContext("2d");
+        const A = toState.scale.dividedBy(fromState.scale);
         const startTime = performance.now();
-
         const animateFrame = now => {
           let t = (now - startTime) / durationMs;
           if (t > 1) t = 1;
-
-          const { scale, translate } = transformFunc(t);
-
-          mainCtx.save();
-          mainCtx.setTransform(scale, 0, 0, scale, translate.x, translate.y);
-          mainCtx.clearRect(0, 0, this.width, this.height);
-          mainCtx.drawImage(snapshotImage, 0, 0);
-          mainCtx.restore();
-
-          if (t < 1) {
-            requestAnimationFrame(animateFrame);
-          } else {
-            onComplete();
+          const onePlus = new Decimal(1).plus(new Decimal(t).times(A.minus(1)));
+          const currentScale = fromState.scale.times(onePlus);
+          const factor = new Decimal(t).times(A).dividedBy(onePlus);
+          const currentCenterX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
+          const currentCenterY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
+          this.computeFractal(currentScale, currentCenterX, currentCenterY, true);
+          if (t < 1) requestAnimationFrame(animateFrame);
+          else {
+            this.centerX = toState.centerX;
+            this.centerY = toState.centerY;
+            this.scale   = toState.scale;
+            this.updateURL();
+            this.computeFractal(this.scale, this.centerX, this.centerY);
+            this.animating = false;
+            onComplete && onComplete();
           }
         };
         requestAnimationFrame(animateFrame);
       }
 
+      animateZoomIn(zoomEntry) {
+        this.animateZoom(zoomEntry.prevState, zoomEntry.targetState, this.zoomDuration);
+      }
+
+      animateZoomOut(zoomEntry) {
+        this.animateZoom(zoomEntry.targetState, zoomEntry.prevState, this.zoomDuration);
+      }
+
       zoomOut() {
         if (this.animating) return;
-
         if (!this.zoomAnimationsEnabled) {
           this.zoomStack.length = 0;
           const newScale = this.scale.dividedBy(this.zoomOutFactor);
-          if (newScale.lessThanOrEqualTo(this.defaultScale)) {
-            this.reset();
-          } else {
+          if (newScale.lessThanOrEqualTo(this.defaultScale)) this.reset();
+          else {
             this.scale = newScale;
             this.computeFractal(newScale, this.centerX, this.centerY);
             this.updateURL();
           }
           return;
         }
-
-        // If we still have zoom stack states, pop and animate outward
         if (this.zoomStack.length > 0) {
           const zoomEntry = this.zoomStack.pop();
-          this.animateZoomOut(zoomEntry, 600);
+          this.animateZoomOut(zoomEntry);
         } else {
-          // If no stack, just do a basic zoom out
           const newScale = this.scale.dividedBy(this.zoomOutFactor);
-          if (newScale.lessThanOrEqualTo(this.defaultScale)) {
-            this.reset();
-          } else {
+          if (newScale.lessThanOrEqualTo(this.defaultScale)) this.reset();
+          else {
             this.scale = newScale;
             this.computeFractal(newScale, this.centerX, this.centerY);
             this.updateURL();
@@ -915,7 +777,6 @@
         filename = filename.replace(/[^a-z0-9]/gi, '_') || "mandelbrot";
         if (!filename.startsWith("mandelbrot_")) filename = "mandelbrot_" + filename;
         filename += ".jpeg";
-
         const link = document.createElement("a");
         link.href = dataURL;
         link.download = filename;
