@@ -658,13 +658,15 @@
         if (width < 5 || height < 5) return;
         this.tip.hide();
 
+        // Convert pixel measurements to Decimal, then transform to fractal space
         const canvasCenterX = new Decimal(this.width).dividedBy(2);
         const canvasCenterY = new Decimal(this.height).dividedBy(2);
 
         const x1 = new Decimal(left.toString());
         const y1 = new Decimal(top.toString());
-        const x2 = new Decimal((left + width).toString());
-        const y2 = new Decimal((top + height).toString());
+        // Use Decimal addition as well:
+        const x2 = new Decimal(left.toString()).plus(new Decimal(width.toString()));
+        const y2 = new Decimal(top.toString()).plus(new Decimal(height.toString()));
 
         const fractalX1 = this.centerX.plus(x1.minus(canvasCenterX).dividedBy(this.scale));
         const fractalY1 = this.centerY.plus(y1.minus(canvasCenterY).dividedBy(this.scale));
@@ -688,22 +690,36 @@
             scale:   newScale
           };
 
-          // B’s transform logic: A, B
-          const oldC = { x: prevState.centerX.toNumber(), y: prevState.centerY.toNumber() };
-          const newC = { x: targetState.centerX.toNumber(), y: targetState.centerY.toNumber() };
-          const oldS = prevState.scale.toNumber();
-          const newS = newScale.toNumber();
+          // Instead of converting toNumber() too early, keep them in Decimal:
+          const oldCx = prevState.centerX;
+          const oldCy = prevState.centerY;
+          const newCx = targetState.centerX;
+          const newCy = targetState.centerY;
+          const oldS  = prevState.scale;
+          const newS  = newScale;
 
-          const A = newS / oldS;
-          const canvasMid = { x: this.width / 2, y: this.height / 2 };
-          const B = {
-            x: (oldC.x - newC.x) * newS + canvasMid.x * (1 - A),
-            y: (oldC.y - newC.y) * newS + canvasMid.y * (1 - A)
+          // A = (final scale) / (initial scale)
+          const A_dec = newS.dividedBy(oldS);
+
+          // Canvas midpoint as Decimal
+          const halfW_dec = new Decimal(this.width).dividedBy(2);
+          const halfH_dec = new Decimal(this.height).dividedBy(2);
+
+          // B = (oldC - newC)*newS + (canvasMid * (1 - A))
+          const BxDec = oldCx.minus(newCx).times(newS)
+            .plus(halfW_dec.times(new Decimal(1).minus(A_dec)));
+          const ByDec = oldCy.minus(newCy).times(newS)
+            .plus(halfH_dec.times(new Decimal(1).minus(A_dec)));
+
+          const zoomEntry = {
+            prevState,
+            targetState,
+            A: A_dec,
+            B: { x: BxDec, y: ByDec }
           };
-
-          const zoomEntry = { prevState, targetState, A, B };
           this.zoomStack.push(zoomEntry);
           this.animateZoomIn(zoomEntry, 600);
+
         } else {
           // Deep mode => no animation
           this.centerX = newCenterX;
@@ -727,32 +743,40 @@
         snapshotImage.src = snapshotCanvas.toDataURL("image/png");
 
         // Precompute the fractal at the new target so it’s ready
-        const { targetState } = zoomEntry;
-        this.computeFractal(targetState.scale, targetState.centerX, targetState.centerY);
+        const { targetState, prevState } = zoomEntry;
+        this.computeFractal(
+          targetState.scale,
+          targetState.centerX,
+          targetState.centerY
+        );
 
-        // Based on B’s transform function
-        const prevState = zoomEntry.prevState;
-        const s_final = targetState.scale.dividedBy(prevState.scale).toNumber();
-
-        const cX = new Decimal(this.width).dividedBy(2);
-        const cY = new Decimal(this.height).dividedBy(2);
-        const T_dec_x = cX.times(new Decimal(1).minus(s_final))
-          .plus(targetState.scale.times(prevState.centerX.minus(targetState.centerX)));
-        const T_dec_y = cY.times(new Decimal(1).minus(s_final))
-          .plus(targetState.scale.times(prevState.centerY.minus(targetState.centerY)));
-        const T_final = {
-          x: T_dec_x.toNumber(),
-          y: T_dec_y.toNumber()
-        };
-
-        const transformFunc = t => ({
-          scale: 1 + t * (s_final - 1),
-          translate: { x: t * T_final.x, y: t * T_final.y }
-        });
+        // We'll do the final transform in decimal,
+        // then convert to number at the last step.
+        const A_dec = zoomEntry.A;  // already the ratio newScale / oldScale
+        const B_dec = zoomEntry.B;
 
         snapshotImage.onload = () => {
+          const transformFunc = t => {
+            // Convert 't' to decimal, then compute scale and translation in decimal
+            const t_dec = new Decimal(t.toString());
+
+            // scaleVal = 1 + t*(A - 1)  because A = newScale/oldScale
+            // (When t=0 => scale=1, t=1 => scale=A)
+            const scale_dec = new Decimal(1).plus( t_dec.times(A_dec.minus(1)) );
+            const scaleNum = scale_dec.toNumber();
+
+            // translation is a fraction t of B
+            const transX_num = t_dec.times(B_dec.x).toNumber();
+            const transY_num = t_dec.times(B_dec.y).toNumber();
+
+            return {
+              scale: scaleNum,
+              translate: { x: transX_num, y: transY_num }
+            };
+          };
+
           this.animateTransform(transformFunc, durationMs, snapshotImage, () => {
-            // finalize
+            // finalize fractal coords in decimal
             this.centerX = targetState.centerX;
             this.centerY = targetState.centerY;
             this.scale   = targetState.scale;
@@ -767,6 +791,7 @@
         this.animating = true;
         this.tip.hide();
 
+        // Precompute fractal for the “previous state”
         const prevState = zoomEntry.prevState;
         this.computeFractal(prevState.scale, prevState.centerX, prevState.centerY);
 
@@ -774,21 +799,38 @@
         snapshotCanvas.width = this.width;
         snapshotCanvas.height = this.height;
         snapshotCanvas.getContext("2d").drawImage(this.offscreenCanvas, 0, 0);
+
         const snapshotImage = new Image();
         snapshotImage.src = snapshotCanvas.toDataURL("image/png");
 
-        // The transform function for zooming out
-        const { A, B } = zoomEntry;
-        const transformFunc = t => {
-          const scaleVal = A + t * (1 - A);
-          return {
-            scale: scaleVal,
-            translate: { x: B.x * (1 - t), y: B.y * (1 - t) }
-          };
-        };
+        // We have A (scale ratio) and B from zoomEntry
+        // Here we move from scale=A back down to 1,
+        // so scale(t) = A + t*(1 - A) = A + t - A*t
+        const A_dec = zoomEntry.A;   // Decimal
+        const B_dec = zoomEntry.B;   // {x, y} also Decimal
 
         snapshotImage.onload = () => {
+          const transformFunc = t => {
+            const t_dec = new Decimal(t.toString());
+            // scaleVal = A + t*(1 - A)
+            const scale_dec = A_dec.plus(
+              t_dec.times(new Decimal(1).minus(A_dec))
+            );
+            const scaleNum = scale_dec.toNumber();
+
+            // translation is B*(1 - t)
+            const oneMinusT = new Decimal(1).minus(t_dec);
+            const transX_num = B_dec.x.times(oneMinusT).toNumber();
+            const transY_num = B_dec.y.times(oneMinusT).toNumber();
+
+            return {
+              scale: scaleNum,
+              translate: { x: transX_num, y: transY_num }
+            };
+          };
+
           this.animateTransform(transformFunc, durationMs, snapshotImage, () => {
+            // finalize fractal coords in decimal
             this.centerX = prevState.centerX;
             this.centerY = prevState.centerY;
             this.scale   = prevState.scale;
@@ -808,6 +850,7 @@
           if (t > 1) t = 1;
 
           const { scale, translate } = transformFunc(t);
+
           mainCtx.save();
           mainCtx.setTransform(scale, 0, 0, scale, translate.x, translate.y);
           mainCtx.clearRect(0, 0, this.width, this.height);
@@ -826,7 +869,6 @@
       zoomOut() {
         if (this.animating) return;
 
-        // If animations are disabled, no fancy transitions
         if (!this.zoomAnimationsEnabled) {
           this.zoomStack.length = 0;
           const newScale = this.scale.dividedBy(this.zoomOutFactor);
