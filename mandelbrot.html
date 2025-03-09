@@ -680,9 +680,14 @@
         const fractalY2 = this.centerY.plus(y2.minus(canvasCenterY).dividedBy(this.scale));
 
         const deltaX = fractalX2.minus(fractalX1);
+        const deltaY = fractalY2.minus(fractalY1);
+
         const newCenterX = fractalX1.plus(fractalX2).dividedBy(2);
         const newCenterY = fractalY1.plus(fractalY2).dividedBy(2);
-        const newScale = new Decimal(this.width).dividedBy(deltaX);
+        
+        const newScaleX = new Decimal(this.width).dividedBy(deltaX);
+        const newScaleY = new Decimal(this.height).dividedBy(deltaY);
+        const newScale = Decimal.min(newScaleX, newScaleY);
 
         if (this.zoomAnimationsEnabled) {
           const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
