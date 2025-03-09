@@ -107,7 +107,7 @@
   <div id="app"></div>
   <script type="module">
     import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
-    import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
+    import { App, Component, div, h1, button, canvas, Let } from "https://esm.sh/solenya";
 
     Decimal.set({ precision: 38 });
 
@@ -118,6 +118,19 @@
         t = setTimeout(() => fn.apply(this, args), ms);
       };
     }
+
+    const getParam = (key, parser, defaultValue, min, max) => {
+      const params = new URLSearchParams(window.location.search); 
+      const str = params.get(key);
+      if (str === null) return defaultValue;
+      try {
+        let val = parser(str);
+        return (typeof val === "number" ? isNaN(val) : val?.isNaN?.()) ? defaultValue
+          : (min !== undefined && val < min ? min : (max !== undefined && val > max ? max : val));
+      } catch (e) {
+        return defaultValue;
+      }
+    };
 
     function clearCanvas(canvasEl) {
       canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
@@ -545,6 +558,7 @@
       colorChoice = 24.2;
       animating = false;
       zoomOutFactor = 2;
+      maxScale = new Decimal("5e37")
 
       offscreenCanvas = document.createElement("canvas");    
       zoomStack = [];
@@ -596,21 +610,13 @@
       }
 
       initFromURL() {
-        const params = new URLSearchParams(window.location.search);
-        const hasPos = params.has("x") && params.has("y") && params.has("z");
-        this.centerX = hasPos ? new Decimal(params.get("x")) : this.defaultCenterX;
-        this.centerY = hasPos ? new Decimal(params.get("y")) : this.defaultCenterY;
-        this.scale   = hasPos ? new Decimal(params.get("z")) : this.defaultScale;
-
-        if (params.has("iterations")) {
-          const rawIter = parseInt(params.get("iterations"));
-          let iter = isNaN(rawIter) ? this.maxIterDefault : rawIter;
-          const clampedIter = Math.min(Math.max(iter, 100), 100000);
-          this.update(() => { this.maxIter = clampedIter; });
-          if (iter !== clampedIter) {        
-            this.updateURL();
-          }
-        }
+        this.update(() => {
+          this.centerX = getParam ("x", d => new Decimal(d), this.defaultCenterX);
+          this.centerY = getParam ("y", d => new Decimal(d), this.defaultCenterY);
+          this.scale = getParam ("z", d => new Decimal(d), this.defaultScale); 
+          this.maxIter = getParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
+        })
+        this.updateURL();
       }
       
       updateURL() {
@@ -741,7 +747,13 @@
         if (this.animating) return;
         if (!this.zoomAnimationsEnabled) { 
           this.zoomStack.length = 0;
-          const newScale = this.scale.dividedBy(this.zoomOutFactor);
+          
+          const newScale = this.scale.dividedBy(
+            this.scale.dividedBy(this.zoomOutFactor).greaterThan(this.maxScale)
+              ? this.scale.dividedBy(this.maxScale)
+              : this.zoomOutFactor
+        );
+
           if (newScale.lessThanOrEqualTo(this.defaultScale)) this.reset();
           else {
             this.scale = newScale;
@@ -766,10 +778,13 @@
 
       reset() {
         if (this.animating) return;
-        this.centerX = this.defaultCenterX;
-        this.centerY = this.defaultCenterY;
-        this.scale   = this.defaultScale;
-        this.computeFractal(this.defaultScale, this.defaultCenterX, this.defaultCenterY);
+        this.update (() => {
+          this.centerX = this.defaultCenterX;
+          this.centerY = this.defaultCenterY;
+          this.scale   = this.defaultScale;
+          this.maxIter = this.maxIterDefault;
+          this.computeFractal(this.defaultScale, this.defaultCenterX, this.defaultCenterY);
+        })
         this.updateURL();
       }
 
