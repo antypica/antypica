@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />  
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
-  <meta name="description" content="Mandelbrot Explorer written as en exercise in using ChatGPT to code. Color function by Hastings Greer, so check out his stuff on Mandelbrots." />
+  <meta name="description" content="Mandelbrot Explorer written as an exercise in using ChatGPT to code. Color function by Hastings Greer, so check out his stuff on Mandelbrots." />
   <style>
     html, body {
       margin: 0;
@@ -277,6 +277,7 @@
           uniform float u_centerY;
           uniform float u_scale;
           uniform int   u_maxIter;
+          uniform int   u_maxIterDefault;
           uniform float u_bailout;
           uniform int   u_refLength;
           uniform float u_colorChoice;
@@ -332,8 +333,7 @@
               smoothIter += 1.0 - log(log(lenz)) / log(2.0);
             }
             float invColor = 1.0 / u_colorChoice;
-            int alt_u_maxIter = 1200;
-            float cval = (smoothIter - float(alt_u_maxIter)) * invColor;
+            float cval = (smoothIter - float(u_maxIterDefault)) * invColor;
             float r = floor(255.0 * (0.5 - cos(cval) / 2.0));
             float g = floor(255.0 * (0.5 - cos(1.1214 * cval) / 2.0));
             float b = floor(255.0 * (0.5 - cos(0.8 * cval) / 2.0));
@@ -357,6 +357,7 @@
           centerY:         gl.getUniformLocation(this.program, "u_centerY"),
           scale:           gl.getUniformLocation(this.program, "u_scale"),
           maxIter:         gl.getUniformLocation(this.program, "u_maxIter"),
+          maxIterDefault:  gl.getUniformLocation(this.program, "u_maxIterDefault"),
           bailout:         gl.getUniformLocation(this.program, "u_bailout"),
           refLength:       gl.getUniformLocation(this.program, "u_refLength"),
           colorChoice:     gl.getUniformLocation(this.program, "u_colorChoice"),
@@ -393,13 +394,13 @@
         return program;
       }
 
-      computeReferenceOrbit(maxIter, centerXDec, centerYDec) {
+      computeReferenceOrbit(maxIter, centerX, centerY) {
         const bailout = new Decimal(4);
         let refOrbit = [{ re: 0, im: 0 }];
         let z_re = new Decimal(0), z_im = new Decimal(0);
         for (let i = 0; i < maxIter; i++) {
-          const new_re = z_re.mul(z_re).sub(z_im.mul(z_im)).add(centerXDec);
-          const new_im = z_re.mul(z_im).mul(2).add(centerYDec);
+          const new_re = z_re.mul(z_re).sub(z_im.mul(z_im)).add(centerX);
+          const new_im = z_re.mul(z_im).mul(2).add(centerY);
           z_re = new_re; z_im = new_im;
           refOrbit.push({ re: parseFloat(z_re.toString()), im: parseFloat(z_im.toString()) });
           if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) break;
@@ -445,7 +446,8 @@
       }
 
       // Applies uniforms and draws the scene.
-      renderScene(resWidth, resHeight, fullWidth, fullHeight, centerX, centerY, scale, maxIter, colorChoice, refLen, lowQualityFlag) {
+      renderScene(resWidth, resHeight, fullWidth, fullHeight,
+                  centerX, centerY, scale, maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag) {
         const gl = this.gl;
         gl.useProgram(this.program);
         gl.uniform2f(this.uniformLocations.resolution, resWidth, resHeight);
@@ -454,6 +456,7 @@
         gl.uniform1f(this.uniformLocations.centerY, centerY);
         gl.uniform1f(this.uniformLocations.scale, scale);
         gl.uniform1i(this.uniformLocations.maxIter, maxIter);
+        gl.uniform1i(this.uniformLocations.maxIterDefault, maxIterDefault);
         gl.uniform1f(this.uniformLocations.bailout, 4.0);
         gl.uniform1i(this.uniformLocations.refLength, refLen);
         gl.uniform1f(this.uniformLocations.colorChoice, colorChoice);
@@ -464,7 +467,7 @@
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
 
-      computeFractal(centerX, centerY, scale, maxIter, colorChoice, lowQuality = false) {
+      computeFractal(centerX, centerY, scale, maxIter, maxIterDefault, colorChoice, lowQuality = false) {
         const gl = this.gl;
         const fullWidth = this.canvasEl.width;
         const fullHeight = this.canvasEl.height;
@@ -506,8 +509,10 @@
         const centerYFloat = parseFloat(centerY.toString());
         const scaleFloat = parseFloat(scale.toString());
 
-        this.renderScene(resWidth, resHeight, fullWidth, fullHeight,
-          centerXFloat, centerYFloat, scaleFloat, maxIter, colorChoice, refLen, lowQualityFlag);
+        this.renderScene(
+          resWidth, resHeight, fullWidth, fullHeight,
+          centerXFloat, centerYFloat, scaleFloat, maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag
+        );
 
         if (lowQuality) {
           // Blit the low-res framebuffer to the main canvas.
@@ -534,20 +539,22 @@
       defaultCenterX = undefined;
       defaultCenterY = undefined;
       defaultScale = undefined;
-
-      maxIter = 1200;
+      
+      maxIterDefault = 1200;
+      maxIter = this.maxIterDefault;
       colorChoice = 24.2;
       animating = false;
       zoomOutFactor = 2;
 
-      offscreenCanvas = document.createElement("canvas");
-      zoomAnimationsEnabled = true;
+      offscreenCanvas = document.createElement("canvas");    
       zoomStack = [];
       zoomDuration = 600;
 
       tip = new Tip();
       marquee = new Marquee();
       mandelbrotComputer = undefined;
+      
+      get zoomAnimationsEnabled() { return this.maxIter <= this.maxIterDefault; }
 
       attached() {        
         setTimeout(() => this.init(), 1);
@@ -558,7 +565,7 @@
         this.mandelbrotComputer = new MandelbrotComputer(this.offscreenCanvas);        
         this.marquee.onStart = () => this.tip.show();
         this.marquee.onEnd = rect => this.processMarquee(rect);
-        this.updateLayout(() => this.initFromURL())        
+        this.updateLayout(() => this.initFromURL());
       }
 
       updateLayout(afterLayout) {
@@ -583,24 +590,35 @@
         this.defaultScale   = new Decimal(computedDefaultScale.toString());
 
         if (afterLayout)
-          afterLayout()
+          afterLayout();
 
         this.computeFractal();
       }
 
       initFromURL() {
         const params = new URLSearchParams(window.location.search);
-        const hasPos = params.has("x") && params.has("y") && params.has("z")
+        const hasPos = params.has("x") && params.has("y") && params.has("z");
         this.centerX = hasPos ? new Decimal(params.get("x")) : this.defaultCenterX;
         this.centerY = hasPos ? new Decimal(params.get("y")) : this.defaultCenterY;
         this.scale   = hasPos ? new Decimal(params.get("z")) : this.defaultScale;
+
+        if (params.has("iterations")) {
+          const rawIter = parseInt(params.get("iterations"));
+          let iter = isNaN(rawIter) ? this.maxIterDefault : rawIter;
+          const clampedIter = Math.min(Math.max(iter, 100), 100000);
+          this.update(() => { this.maxIter = clampedIter; });
+          if (iter !== clampedIter) {        
+            this.updateURL();
+          }
+        }
       }
       
       updateURL() {
         if (
           this.centerX.equals(this.defaultCenterX) &&
           this.centerY.equals(this.defaultCenterY) &&
-          this.scale.equals(this.defaultScale)
+          this.scale.equals(this.defaultScale) &&
+          this.maxIter === this.maxIterDefault
         ) {
           history.replaceState(null, "", window.location.pathname);
         } else {          
@@ -609,16 +627,17 @@
           params.set("x", this.centerX.toSignificantDigits(digits).toString());
           params.set("y", this.centerY.toSignificantDigits(digits).toString());
           params.set("z", this.scale.toFixed(0));
+          params.set("iterations", this.maxIter);
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
       }
 
       toggleMode() {
         if (this.animating) return;
-        this.update(() => {
-          this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
-          this.maxIter = this.zoomAnimationsEnabled ? 1200 : 9600;
+        this.update(() => {      
+          this.maxIter = this.maxIter <= this.maxIterDefault ? 9600 : this.maxIterDefault;
           this.computeFractal();
+          this.updateURL();
         });
       }
 
@@ -628,7 +647,10 @@
           this.centerX = new Decimal(cxOverride.toString());
           this.centerY = new Decimal(cyOverride.toString());
         }
-        this.mandelbrotComputer.computeFractal(this.centerX, this.centerY, this.scale, this.maxIter, this.colorChoice, lowQuality);
+        this.mandelbrotComputer.computeFractal(
+          this.centerX, this.centerY, this.scale,
+          this.maxIter, this.maxIterDefault, this.colorChoice, lowQuality
+        );
         const mainCtx = this.canvasEl.getContext("2d");
         mainCtx.clearRect(0, 0, this.width, this.height);
         mainCtx.drawImage(this.offscreenCanvas, 0, 0);
@@ -660,7 +682,7 @@
           const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
           const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
 
-          const A_dec = newScale.dividedBy(this.centerX);  // Using current scale
+          const A_dec = newScale.dividedBy(this.scale);  // Using current scale
           const halfW_dec = new Decimal(this.width).dividedBy(2);
           const halfH_dec = new Decimal(this.height).dividedBy(2);
           const BxDec = this.centerX.minus(newCenterX).times(newScale)
