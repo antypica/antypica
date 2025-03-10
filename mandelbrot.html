@@ -415,7 +415,7 @@
           const new_re = z_re.mul(z_re).sub(z_im.mul(z_im)).add(centerX);
           const new_im = z_re.mul(z_im).mul(2).add(centerY);
           z_re = new_re; z_im = new_im;
-          refOrbit.push({ re: parseFloat(z_re.toString()), im: parseFloat(z_im.toString()) });
+          refOrbit.push({ re: z_re, im: z_im });
           if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) break;
         }
         return refOrbit;
@@ -513,18 +513,11 @@
 
         this.setupQuadBuffer();
 
-        // Compute and update reference orbit.
         const refOrbit = this.computeReferenceOrbit(maxIter, centerX, centerY);
         const refLen = this.updateRefOrbitTexture(refOrbit);
 
-        // Convert Decimal values to float.
-        const centerXFloat = parseFloat(centerX.toString());
-        const centerYFloat = parseFloat(centerY.toString());
-        const scaleFloat = parseFloat(scale.toString());
-
         this.renderScene(
-          resWidth, resHeight, fullWidth, fullHeight,
-          centerXFloat, centerYFloat, scaleFloat, maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag
+          resWidth, resHeight, fullWidth, fullHeight, centerX.toNumber(), centerY.toNumber(), scale.toNumber(), maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag
         );
 
         if (lowQuality) {
@@ -599,9 +592,9 @@
         const defaultCenterX = (minX + maxX) / 2;
         const defaultCenterY = 0;
 
-        this.defaultCenterX = new Decimal(defaultCenterX.toString());
-        this.defaultCenterY = new Decimal(defaultCenterY.toString());
-        this.defaultScale   = new Decimal(computedDefaultScale.toString());
+        this.defaultCenterX = new Decimal(defaultCenterX);
+        this.defaultCenterY = new Decimal(defaultCenterY);
+        this.defaultScale   = new Decimal(computedDefaultScale);
 
         if (afterLayout)
           afterLayout();
@@ -661,76 +654,73 @@
         if (width < 5 || height < 5) return;
         this.tip.hide();
 
-        const canvasCenterX = new Decimal(this.width).dividedBy(2);
-        const canvasCenterY = new Decimal(this.height).dividedBy(2);
-        const x1 = new Decimal(left.toString());
-        const y1 = new Decimal(top.toString());
-        const x2 = x1.plus(new Decimal(width.toString()));
-        const y2 = y1.plus(new Decimal(height.toString()));
+        const canvasCenter = {
+          x: new Decimal(this.width).dividedBy(2),
+          y: new Decimal(this.height).dividedBy(2)
+        };
 
-        const fractalX1 = this.centerX.plus(x1.minus(canvasCenterX).dividedBy(this.scale));
-        const fractalY1 = this.centerY.plus(y1.minus(canvasCenterY).dividedBy(this.scale));
-        const fractalX2 = this.centerX.plus(x2.minus(canvasCenterX).dividedBy(this.scale));
-        const fractalY2 = this.centerY.plus(y2.minus(canvasCenterY).dividedBy(this.scale));
+        const canvasRect = {
+          x1: new Decimal(left),
+          y1: new Decimal(top),
+          x2: new Decimal(left).plus(width),
+          y2: new Decimal(top).plus(height)
+        };
 
-        const deltaX = fractalX2.minus(fractalX1);
-        const deltaY = fractalY2.minus(fractalY1);
+        const fractalRect = {
+          x1: this.centerX.plus(canvasRect.x1.minus(canvasCenter.x).dividedBy(this.scale)),
+          y1: this.centerY.plus(canvasRect.y1.minus(canvasCenter.y).dividedBy(this.scale)),
+          x2: this.centerX.plus(canvasRect.x2.minus(canvasCenter.x).dividedBy(this.scale)),
+          y2: this.centerY.plus(canvasRect.y2.minus(canvasCenter.y).dividedBy(this.scale))
+        };
 
-        const newCenterX = fractalX1.plus(fractalX2).dividedBy(2);
-        const newCenterY = fractalY1.plus(fractalY2).dividedBy(2);
-        
-        const newScaleX = new Decimal(this.width).dividedBy(deltaX);
-        const newScaleY = new Decimal(this.height).dividedBy(deltaY);
+        const rectWidth = fractalRect.x2.minus(fractalRect.x1);
+        const rectHeight = fractalRect.y2.minus(fractalRect.y1);
+        const newCenterX = fractalRect.x1.plus(fractalRect.x2).dividedBy(2);
+        const newCenterY = fractalRect.y1.plus(fractalRect.y2).dividedBy(2);
+
+        const newScaleX = new Decimal(this.width).dividedBy(rectWidth);
+        const newScaleY = new Decimal(this.height).dividedBy(rectHeight);
         const newScale = Decimal.min(newScaleX, newScaleY);
 
-        if (! this.zoomAnimationsEnabled) {
+        if (!this.zoomAnimationsEnabled) {
           this.centerX = newCenterX;
           this.centerY = newCenterY;
-          this.scale   = newScale;
+          this.scale = newScale;
           this.computeFractal();
-        }
-        else {
+        } else {
           const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
           const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
-
-          const A_dec = newScale.dividedBy(this.scale);
-          const halfW_dec = new Decimal(this.width).dividedBy(2);
-          const halfH_dec = new Decimal(this.height).dividedBy(2);
-          const BxDec = this.centerX.minus(newCenterX).times(newScale)
-            .plus(halfW_dec.times(new Decimal(1).minus(A_dec)));
-          const ByDec = this.centerY.minus(newCenterY).times(newScale)
-            .plus(halfH_dec.times(new Decimal(1).minus(A_dec)));
-
-          const zoomEntry = { prevState, targetState, A: A_dec, B: { x: BxDec, y: ByDec } };
-          this.zoomStack.push(zoomEntry);
-          this.animateZoom(zoomEntry.prevState, zoomEntry.targetState);
+          this.zoomStack.push({ prevState, targetState });
+          this.animateZoom(prevState, targetState);
         }
       }
 
       animateZoom(fromState, toState) {
         this.animating = true;
-        const A = toState.scale.dividedBy(fromState.scale);
+        const zoom = toState.scale.dividedBy(fromState.scale);
         const startTime = performance.now();
+
         const animateFrame = now => {
           let t = (now - startTime) / this.zoomDuration;
           if (t > 1) t = 1;
-          const onePlus = new Decimal(1).plus(new Decimal(t).times(A.minus(1)));          
-          const factor = new Decimal(t).times(A).dividedBy(onePlus);
-          
+
+          const interpolatedZoomFactor = new Decimal(1).plus(new Decimal(t).times(zoom.minus(1)));
+          const factor = new Decimal(t).times(zoom).dividedBy(interpolatedZoomFactor);
+
+          // Linearly interpolate the center position based on the factor
           this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
           this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
-          this.scale = fromState.scale.times(onePlus);
-          this.computeFractal();
+          this.scale = fromState.scale.times(interpolatedZoomFactor);
 
-          if (t < 1) requestAnimationFrame(animateFrame);
-          else {
-            this.centerX = toState.centerX;
-            this.centerY = toState.centerY;
-            this.scale   = toState.scale;     
-            this.animating = false;       
-            this.computeFractal();                        
+          if (t === 1) {
+            this.animating = false;
+          }
+          this.computeFractal();
+          if (t < 1) {
+            requestAnimationFrame(animateFrame);
           }
         };
+
         requestAnimationFrame(animateFrame);
       }
 
