@@ -633,9 +633,9 @@
       toggleMode() {
         if (this.animating) return;
         this.update(() => {      
-          this.maxIter = this.maxIter <= this.maxIterDefault ? 9600 : this.maxIterDefault;
-          this.computeFractal();          
+          this.maxIter = this.maxIter <= this.maxIterDefault ? 9600 : this.maxIterDefault;          
         });
+        setTimeout (() => this.computeFractal(), 1); 
       }
 
       computeFractal() {
@@ -755,7 +755,7 @@
           this.scale   = this.defaultScale;
           this.maxIter = this.maxIterDefault;          
         })
-        setTimeout (() => this.computeFractal(), 0);
+        setTimeout (() => this.computeFractal(), 1);
       }
 
       saveImage() {
