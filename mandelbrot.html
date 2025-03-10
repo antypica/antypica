@@ -119,7 +119,7 @@
       };
     }
 
-    const getParam = (key, parser, defaultValue, min, max) => {
+    const getNumericParam = (key, parser, defaultValue, min, max) => {
       const params = new URLSearchParams(window.location.search); 
       const str = params.get(key);
       if (str === null) return defaultValue;
@@ -611,12 +611,11 @@
 
       initFromURL() {
         this.update(() => {
-          this.centerX = getParam ("x", d => new Decimal(d), this.defaultCenterX);
-          this.centerY = getParam ("y", d => new Decimal(d), this.defaultCenterY);
-          this.scale = getParam ("z", d => new Decimal(d), this.defaultScale); 
-          this.maxIter = getParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
-        })
-        this.updateURL();
+          this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
+          this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
+          this.scale = getNumericParam ("z", d => new Decimal(d), this.defaultScale); 
+          this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
+        })        
       }
       
       updateURL() {
@@ -642,24 +641,19 @@
         if (this.animating) return;
         this.update(() => {      
           this.maxIter = this.maxIter <= this.maxIterDefault ? 9600 : this.maxIterDefault;
-          this.computeFractal();
-          this.updateURL();
+          this.computeFractal();          
         });
       }
 
-      computeFractal(scaleOverride, cxOverride, cyOverride, lowQuality = false) {
-        if (scaleOverride !== undefined && cxOverride !== undefined && cyOverride !== undefined) {
-          this.scale   = new Decimal(scaleOverride.toString());
-          this.centerX = new Decimal(cxOverride.toString());
-          this.centerY = new Decimal(cyOverride.toString());
-        }
+      computeFractal() {
         this.mandelbrotComputer.computeFractal(
-          this.centerX, this.centerY, this.scale,
-          this.maxIter, this.maxIterDefault, this.colorChoice, lowQuality
-        );
+          this.centerX, this.centerY, this.scale, this.maxIter, this.maxIterDefault, this.colorChoice, this.animating
+        );        
         const mainCtx = this.canvasEl.getContext("2d");
         mainCtx.clearRect(0, 0, this.width, this.height);
         mainCtx.drawImage(this.offscreenCanvas, 0, 0);
+        if (! this.animating)
+          this.updateURL();
       }
 
       processMarquee(rect) {
@@ -689,11 +683,17 @@
         const newScaleY = new Decimal(this.height).dividedBy(deltaY);
         const newScale = Decimal.min(newScaleX, newScaleY);
 
-        if (this.zoomAnimationsEnabled) {
+        if (! this.zoomAnimationsEnabled) {
+          this.centerX = newCenterX;
+          this.centerY = newCenterY;
+          this.scale   = newScale;
+          this.computeFractal();
+        }
+        else {
           const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
           const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
 
-          const A_dec = newScale.dividedBy(this.scale);  // Using current scale
+          const A_dec = newScale.dividedBy(this.scale);
           const halfW_dec = new Decimal(this.width).dividedBy(2);
           const halfH_dec = new Decimal(this.height).dividedBy(2);
           const BxDec = this.centerX.minus(newCenterX).times(newScale)
@@ -703,94 +703,69 @@
 
           const zoomEntry = { prevState, targetState, A: A_dec, B: { x: BxDec, y: ByDec } };
           this.zoomStack.push(zoomEntry);
-          this.animateZoomIn(zoomEntry);
-        } else {
-          this.centerX = newCenterX;
-          this.centerY = newCenterY;
-          this.scale   = newScale;
-          this.computeFractal(newScale, newCenterX, newCenterY);
-          this.updateURL();
+          this.animateZoom(zoomEntry.prevState, zoomEntry.targetState);
         }
       }
 
-      animateZoom(fromState, toState, durationMs, onComplete) {
+      animateZoom(fromState, toState) {
         this.animating = true;
         const A = toState.scale.dividedBy(fromState.scale);
         const startTime = performance.now();
         const animateFrame = now => {
-          let t = (now - startTime) / durationMs;
+          let t = (now - startTime) / this.zoomDuration;
           if (t > 1) t = 1;
-          const onePlus = new Decimal(1).plus(new Decimal(t).times(A.minus(1)));
-          const currentScale = fromState.scale.times(onePlus);
+          const onePlus = new Decimal(1).plus(new Decimal(t).times(A.minus(1)));          
           const factor = new Decimal(t).times(A).dividedBy(onePlus);
-          const currentCenterX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
-          const currentCenterY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
-          this.computeFractal(currentScale, currentCenterX, currentCenterY, true);
+          
+          this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
+          this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
+          this.scale = fromState.scale.times(onePlus);
+          this.computeFractal();
+
           if (t < 1) requestAnimationFrame(animateFrame);
           else {
             this.centerX = toState.centerX;
             this.centerY = toState.centerY;
-            this.scale   = toState.scale;
-            this.updateURL();
-            this.computeFractal(this.scale, this.centerX, this.centerY);
-            this.animating = false;
-            onComplete && onComplete();
+            this.scale   = toState.scale;     
+            this.animating = false;       
+            this.computeFractal();                        
           }
         };
         requestAnimationFrame(animateFrame);
       }
 
-      animateZoomIn(zoomEntry) {
-        this.animateZoom(zoomEntry.prevState, zoomEntry.targetState, this.zoomDuration);
-      }
-
-      animateZoomOut(zoomEntry) {
-        this.animateZoom(zoomEntry.targetState, zoomEntry.prevState, this.zoomDuration);
-      }
-
       zoomOut() {
         if (this.animating) return;
-        if (!this.zoomAnimationsEnabled) { 
-          this.zoomStack.length = 0;
-          
-          const newScale = this.scale.dividedBy(
-            this.scale.dividedBy(this.zoomOutFactor).greaterThan(this.maxScale)
-              ? this.scale.dividedBy(this.maxScale)
-              : this.zoomOutFactor
-        );
-
-          if (newScale.lessThanOrEqualTo(this.defaultScale)) this.reset();
-          else {
-            this.scale = newScale;
-            this.computeFractal(newScale, this.centerX, this.centerY);
-            this.updateURL();
-          }
+        if (!this.zoomAnimationsEnabled) {
+          this.zoomStack = [];
+        }    
+        if (this.zoomAnimationsEnabled && this.zoomStack.length > 0) {
+          const zoomEntry = this.zoomStack.pop();
+          this.animateZoom(zoomEntry.targetState, zoomEntry.prevState);
           return;
         }
-        if (this.zoomStack.length > 0) {
-          const zoomEntry = this.zoomStack.pop();
-          this.animateZoomOut(zoomEntry);
+        let newScale = this.scale.dividedBy(this.zoomOutFactor);
+        if (!this.zoomAnimationsEnabled && newScale.greaterThan(this.maxScale)) {
+          newScale = this.maxScale;
+        }
+        if (newScale.lessThanOrEqualTo(this.defaultScale)) {
+          this.reset();
         } else {
-          const newScale = this.scale.dividedBy(this.zoomOutFactor);
-          if (newScale.lessThanOrEqualTo(this.defaultScale)) this.reset();
-          else {
-            this.scale = newScale;
-            this.computeFractal(newScale, this.centerX, this.centerY);
-            this.updateURL();
-          }
+          this.scale = newScale;
+          this.computeFractal();
         }
       }
 
       reset() {
         if (this.animating) return;
         this.update (() => {
+          this.zoomStack = [];
           this.centerX = this.defaultCenterX;
           this.centerY = this.defaultCenterY;
           this.scale   = this.defaultScale;
-          this.maxIter = this.maxIterDefault;
-          this.computeFractal(this.defaultScale, this.defaultCenterX, this.defaultCenterY);
+          this.maxIter = this.maxIterDefault;          
         })
-        this.updateURL();
+        setTimeout (() => this.computeFractal(), 0);
       }
 
       saveImage() {
