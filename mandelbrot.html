@@ -598,14 +598,15 @@
       initFromURL() {
         this.update(() => {
           this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
-          this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
+          this.centerY = getNumericParam ("y", d => new Decimal(d).times(-1), this.defaultCenterY);
           this.z = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
           this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
         })        
       }
 
       zArg() {
-        return this.z.lessThan (1000000) ? this.z.toSignificantDigits(3).toString() :
+        return this.z.lessThan (1000000) ?
+               this.z.toSignificantDigits(3).toString() :
                this.z.toSignificantDigits(3).toExponential().replace("+","");
       }
       
@@ -621,7 +622,7 @@
           const params = new URLSearchParams();
           const sf = this.z.toFixed(2).length;
           params.set("x", this.centerX.toSignificantDigits(sf).toString());
-          params.set("y", this.centerY.toSignificantDigits(sf).toString());
+          params.set("y", this.centerY.toSignificantDigits(sf).times(-1).toString());
           params.set("z", this.zArg());
           params.set("iterations", this.maxIter);
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
