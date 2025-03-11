@@ -603,6 +603,11 @@
           this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
         })        
       }
+
+      zArg() {
+        return this.z.lessThan (1000000) ? this.z.toSignificantDigits(3).toString() :
+               this.z.toSignificantDigits(3).toExponential().replace("+","");
+      }
       
       updateURL() {
         if (
@@ -614,10 +619,10 @@
           history.replaceState(null, "", window.location.pathname);
         } else {                    
           const params = new URLSearchParams();
-          const digits = this.z.toFixed(2).length;
-          params.set("x", this.centerX.toSignificantDigits(digits).toString());
-          params.set("y", this.centerY.toSignificantDigits(digits).toString());
-          params.set("z", this.z.toFixed(2));
+          const sf = this.z.toFixed(2).length;
+          params.set("x", this.centerX.toSignificantDigits(sf).toString());
+          params.set("y", this.centerY.toSignificantDigits(sf).toString());
+          params.set("z", this.zArg());
           params.set("iterations", this.maxIter);
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
