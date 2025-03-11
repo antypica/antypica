@@ -536,22 +536,26 @@
       }
     }
 
-    class MandelbrotExplorer extends Component {
-      width = window.innerWidth;
-      height = window.innerHeight;
-      centerX = undefined;
-      centerY = undefined;
-      scale = undefined;
-      defaultCenterX = undefined;
-      defaultCenterY = undefined;
-      defaultScale = undefined;
+    class MandelbrotExplorer extends Component {                 
+      defaultCenterX = new Decimal(-0.75)
+      defaultCenterY = new Decimal(0.0)
+      defaultWidth = new Decimal(3.5)
+      defaultHeight = new Decimal(2)
+      defaultZ = new Decimal(1)                        
+      centerX = undefined
+      centerY = undefined;   
+      z = undefined;  
       
+      canvasWidth = window.innerWidth;
+      canvasHeight = window.innerHeight;
+      defaultCanvasScale = undefined;
+
       maxIterDefault = 1200;
       maxIter = this.maxIterDefault;
       colorChoice = 24.2;
       animating = false;
       zoomOutFactor = 2;
-      maxScale = new Decimal("5e37")
+      maxCanvasScale = new Decimal("5e37")
 
       offscreenCanvas = document.createElement("canvas");    
       zoomStack = [];
@@ -560,7 +564,9 @@
       tip = new Tip();
       marquee = new Marquee();
       mandelbrotComputer = undefined;
-      
+
+      get canvasScale () { return this.z.times(this.defaultCanvasScale); }
+      set canvasScale (value) { this.z = value.dividedBy(this.defaultCanvasScale) }      
       get zoomAnimationsEnabled() { return this.maxIter <= this.maxIterDefault; }
 
       attached() {        
@@ -575,27 +581,14 @@
         this.updateLayout(() => this.initFromURL());
       }
 
-      updateLayout(afterLayout) {
-        this.width = window.innerWidth;
-        this.height = window.innerHeight;
-        this.offscreenCanvas.width  = this.width;
-        this.offscreenCanvas.height = this.height;
-        this.canvasEl.width  = this.width;
-        this.canvasEl.height = this.height;
-        this.marquee.canvasEl.width  = this.width;
-        this.marquee.canvasEl.height = this.height;
-
-        const minX = -2.5, maxX = 1.0, minY = -1.0, maxY = 1.0;
-        const computedDefaultScale = (this.width / this.height >= (maxX - minX) / (maxY - minY))
-          ? (this.height / (maxY - minY) * 0.8)
-          : (this.width / (maxX - minX));
-        const defaultCenterX = (minX + maxX) / 2;
-        const defaultCenterY = 0;
-
-        this.defaultCenterX = new Decimal(defaultCenterX);
-        this.defaultCenterY = new Decimal(defaultCenterY);
-        this.defaultScale   = new Decimal(computedDefaultScale);
-
+      updateLayout(afterLayout) {        
+        this.canvasWidth = this.offscreenCanvas.width =this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
+        this.canvasHeight = this.offscreenCanvas.height =this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;  
+        
+        this.defaultCanvasScale = new Decimal ((this.canvasWidth / this.canvasHeight >= this.defaultWidth.dividedBy(this.defaultHeight).toNumber())
+          ? (this.canvasHeight / this.defaultHeight * 0.8)
+          : this.canvasWidth / this.defaultWidth);
+        
         if (afterLayout)
           afterLayout();
 
@@ -606,7 +599,7 @@
         this.update(() => {
           this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
           this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
-          this.scale = getNumericParam ("z", d => new Decimal(d), this.defaultScale); 
+          this.z = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
           this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
         })        
       }
@@ -615,16 +608,16 @@
         if (
           this.centerX.equals(this.defaultCenterX) &&
           this.centerY.equals(this.defaultCenterY) &&
-          this.scale.equals(this.defaultScale) &&
+          this.z.equals(this.defaultZ) &&
           this.maxIter === this.maxIterDefault
         ) {
           history.replaceState(null, "", window.location.pathname);
-        } else {          
-          const digits = this.scale.toFixed(0).length;
+        } else {                    
           const params = new URLSearchParams();
+          const digits = this.z.toFixed(2).length;
           params.set("x", this.centerX.toSignificantDigits(digits).toString());
           params.set("y", this.centerY.toSignificantDigits(digits).toString());
-          params.set("z", this.scale.toFixed(0));
+          params.set("z", this.z.toFixed(2));
           params.set("iterations", this.maxIter);
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
@@ -640,10 +633,10 @@
 
       computeFractal() {
         this.mandelbrotComputer.computeFractal(
-          this.centerX, this.centerY, this.scale, this.maxIter, this.maxIterDefault, this.colorChoice, this.animating
+          this.centerX, this.centerY, this.canvasScale, this.maxIter, this.maxIterDefault, this.colorChoice, this.animating
         );        
         const mainCtx = this.canvasEl.getContext("2d");
-        mainCtx.clearRect(0, 0, this.width, this.height);
+        mainCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
         mainCtx.drawImage(this.offscreenCanvas, 0, 0);
         if (! this.animating)
           this.updateURL();
@@ -655,8 +648,8 @@
         this.tip.hide();
 
         const canvasCenter = {
-          x: new Decimal(this.width).dividedBy(2),
-          y: new Decimal(this.height).dividedBy(2)
+          x: new Decimal(this.canvasWidth).dividedBy(2),
+          y: new Decimal(this.canvasHeight).dividedBy(2)
         };
 
         const canvasRect = {
@@ -667,10 +660,10 @@
         };
 
         const fractalRect = {
-          x1: this.centerX.plus(canvasRect.x1.minus(canvasCenter.x).dividedBy(this.scale)),
-          y1: this.centerY.plus(canvasRect.y1.minus(canvasCenter.y).dividedBy(this.scale)),
-          x2: this.centerX.plus(canvasRect.x2.minus(canvasCenter.x).dividedBy(this.scale)),
-          y2: this.centerY.plus(canvasRect.y2.minus(canvasCenter.y).dividedBy(this.scale))
+          x1: this.centerX.plus(canvasRect.x1.minus(canvasCenter.x).dividedBy(this.canvasScale)),
+          y1: this.centerY.plus(canvasRect.y1.minus(canvasCenter.y).dividedBy(this.canvasScale)),
+          x2: this.centerX.plus(canvasRect.x2.minus(canvasCenter.x).dividedBy(this.canvasScale)),
+          y2: this.centerY.plus(canvasRect.y2.minus(canvasCenter.y).dividedBy(this.canvasScale))
         };
 
         const rectWidth = fractalRect.x2.minus(fractalRect.x1);
@@ -678,17 +671,17 @@
         const newCenterX = fractalRect.x1.plus(fractalRect.x2).dividedBy(2);
         const newCenterY = fractalRect.y1.plus(fractalRect.y2).dividedBy(2);
 
-        const newScaleX = new Decimal(this.width).dividedBy(rectWidth);
-        const newScaleY = new Decimal(this.height).dividedBy(rectHeight);
+        const newScaleX = new Decimal(this.canvasWidth).dividedBy(rectWidth);
+        const newScaleY = new Decimal(this.canvasHeight).dividedBy(rectHeight);
         const newScale = Decimal.min(newScaleX, newScaleY);
 
         if (!this.zoomAnimationsEnabled) {
           this.centerX = newCenterX;
           this.centerY = newCenterY;
-          this.scale = newScale;
+          this.canvasScale = newScale;
           this.computeFractal();
         } else {
-          const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.scale };
+          const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.canvasScale };
           const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
           this.zoomStack.push({ prevState, targetState });
           this.animateZoom(prevState, targetState);
@@ -710,7 +703,7 @@
           // Linearly interpolate the center position based on the factor
           this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
           this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
-          this.scale = fromState.scale.times(interpolatedZoomFactor);
+          this.canvasScale = fromState.scale.times(interpolatedZoomFactor);
 
           if (t === 1) {
             this.animating = false;
@@ -734,14 +727,14 @@
           this.animateZoom(zoomEntry.targetState, zoomEntry.prevState);
           return;
         }
-        let newScale = this.scale.dividedBy(this.zoomOutFactor);
-        if (!this.zoomAnimationsEnabled && newScale.greaterThan(this.maxScale)) {
-          newScale = this.maxScale;
+        let newScale = this.canvasScale.dividedBy(this.zoomOutFactor);
+        if (!this.zoomAnimationsEnabled && newScale.greaterThan(this.maxCanvasScale)) {
+          newScale = this.maxCanvasScale;
         }
-        if (newScale.lessThanOrEqualTo(this.defaultScale)) {
+        if (newScale.lessThanOrEqualTo(this.defaultCanvasScale)) {
           this.reset();
         } else {
-          this.scale = newScale;
+          this.canvasScale = newScale;
           this.computeFractal();
         }
       }
@@ -750,9 +743,9 @@
         if (this.animating) return;
         this.update (() => {
           this.zoomStack = [];
+          this.z = this.defaultZ;
           this.centerX = this.defaultCenterX;
-          this.centerY = this.defaultCenterY;
-          this.scale   = this.defaultScale;
+          this.centerY = this.defaultCenterY;          
           this.maxIter = this.maxIterDefault;          
         })
         setTimeout (() => this.computeFractal(), 1);
@@ -777,11 +770,11 @@
         return div(
           canvas({
             id: "mainCanvas",
-            width: this.width,
-            height: this.height,
+            width: this.canvasWidth,
+            height: this.canvasHeight,
             onAttached: el => { this.canvasEl = el; }
           }),
-          this.marquee.view({ id: "marqueeCanvas", width: this.width, height: this.height }),
+          this.marquee.view({ id: "marqueeCanvas", width: this.canvasWidth, height: this.canvasHeight }),
           this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
           div({ class: "infoBox" },
             h1({ class: "title" }, "Mandelbrot Explorer"),
