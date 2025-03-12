@@ -107,7 +107,7 @@
   <div id="app"></div>
   <script type="module">
     import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
-    import { App, Component, div, h1, button, canvas, Let } from "https://esm.sh/solenya";
+    import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
 
     Decimal.set({ precision: 38 });
 
@@ -760,10 +760,7 @@
       saveImage() {
         if (this.animating) return;
         const dataURL = this.canvasEl.toDataURL("image/jpeg");
-        let filename = window.location.search.substring(1) || "mandelbrot";
-        filename = filename.replace(/[^a-z0-9]/gi, '_') || "mandelbrot";
-        if (!filename.startsWith("mandelbrot_")) filename = "mandelbrot_" + filename;
-        filename += ".jpeg";
+        let filename = "mandelbrot_" +  location.search.slice(1) + ".jpeg";
         const link = document.createElement("a");
         link.href = dataURL;
         link.download = filename;
