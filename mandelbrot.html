@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />  
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
-  <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^100 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
+  <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^300 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
   <style>
     html, body {
       margin: 0;
@@ -110,9 +110,6 @@
     import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
     import { init } from "https://cdn.skypack.dev/gmp-wasm";
     import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
-    
-    const PRECISION = 100;
-    Decimal.set({ precision: PRECISION });
 
     // algorithm adapted from Hastings Greer          
     async function createMandelbrotRenderer() {
@@ -777,8 +774,8 @@
       zoomAnimationsEnabled = true;
       animating = false;      
       zoomOutFactor = 2;
-      maxZ = new Decimal("1e"+PRECISION)
-      prevZ = 1;
+      maxZ = new Decimal(1E300);
+      prevZ = new Decimal(1);
       
       zoomStack = [];
       zoomDuration = 600;
@@ -862,17 +859,18 @@
         return Number(iter.toPrecision(2));
       }
 
-      autoAdjustMaxIter() {
+      autoAdjustMaxIterAndPrecision() {
         const idealMaxIter = this.dynamicMaxIter()
         if ((this.z.greaterThan(this.prevZ) && this.maxIter < idealMaxIter) ||
             (this.z.lessThan(this.prevZ)    && this.maxIter > idealMaxIter)) {
           this.maxIter = idealMaxIter          
         }
+        Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 5 });
         this.prevZ = this.z
       }
 
       renderFractal() { 
-        this.autoAdjustMaxIter()
+        this.autoAdjustMaxIterAndPrecision()        
         const z = new Decimal(1).dividedBy(this.zActual)        
         this.mandelbrotRender (this.canvasEl, this.centerX, this.centerY, z, this.maxIter, this.colorChoice, this.colorMax, {lowRes: this.animating});
         if (! this.animating)
