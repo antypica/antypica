@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />  
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Mandelbrot Explorer</title>
-  <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^35 zoom depth, WebGL2 accelerated. Color function by Hastings Greer, so check out his stuff on Mandelbrots." />
+  <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^100 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
   <style>
     html, body {
       margin: 0;
@@ -105,11 +105,519 @@
 </head>
 <body>
   <div id="app"></div>
-  <script type="module">
+  <script type="module">    
+    import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";    
+    import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
+    import { init } from "https://cdn.skypack.dev/gmp-wasm";
     import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
-    import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
+    
+    const PRECISION = 100;
+    Decimal.set({ precision: PRECISION });
 
-    Decimal.set({ precision: 38 });
+    // algorithm adapted from Hastings Greer          
+    async function createMandelbrotRenderer() {
+      const { binding } = await init(); // init() loads the mpfr binding
+
+      /* ------------------ Arithmetic Helpers ------------------ */
+      function mpfr_zero() {
+        const zero = binding.mpfr_t();
+        binding.mpfr_init2(zero, 1200);
+        binding.mpfr_set_d(zero, 0, 0);
+        return zero;
+      }
+      function get_exp(val) {
+        const tmp = mpfr_zero();
+        binding.mpfr_log2(tmp, val, 0);
+        return binding.mpfr_get_d(tmp, 0);
+      }
+      function alignExponents(a, b) {
+        let [am, ae] = a, [bm, be] = b;
+        const retE = Math.max(ae, be);
+        if (retE > ae) am *= Math.pow(2, ae - retE);
+        else bm *= Math.pow(2, be - retE);
+        return [am, bm, retE];
+      }
+      function sub(a, b) {
+        let [am, bm, e] = alignExponents(a, b);
+        return [am - bm, e];
+      }
+      function add(a, b) {
+        let [am, bm, e] = alignExponents(a, b);
+        return [am + bm, e];
+      }
+      function mul(a, b) {
+        let [am, ae] = a, [bm, be] = b;
+        let m = am * bm, e = ae + be;
+        if (m !== 0) {
+          const logm = Math.round(Math.log2(Math.abs(m)));
+          m = m / Math.pow(2, logm);
+          e += logm;
+        }
+        return [m, e];
+      }
+      function maxabs(a, b) {
+        let [am, bm, e] = alignExponents(a, b);
+        return [Math.max(Math.abs(am), Math.abs(bm)), e];
+      }
+      function gt(a, b) {
+        let [am] = alignExponents(a, b);
+        let [, bm] = alignExponents(a, b);
+        return am > bm;
+      }
+      function floaty(d) {
+        return Math.pow(2, d[1]) * d[0];
+      }
+
+      /* ------------------ WebGL Helpers ------------------ */
+      function loadShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+          throw new Error("Error compiling shader: " + gl.getShaderInfoLog(shader));
+        return shader;
+      }
+      function initShaderProgram(gl, vsSource, fsSource) {
+        const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+        const shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
+          throw new Error("Unable to initialize shader program: " + gl.getProgramInfoLog(shaderProgram));
+        return shaderProgram;
+      }
+      function createAndSetupTexture(gl, unit, width, height, internalFormat, format, type, data = null) {
+        const tex = gl.createTexture();
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
+        return tex;
+      }
+      function createFramebufferForTexture(gl, tex) {
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
+          throw new Error("Framebuffer not complete.");
+        return fbo;
+      }
+      // drawPass encapsulates a drawing call for a given framebuffer.
+      function drawPass(gl, framebuffer, width, height, setUniforms) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+        gl.viewport(0, 0, width, height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        if (typeof setUniforms === "function") setUniforms();
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.finish();
+      }
+
+      /* ------------------ Shader Sources ------------------ */
+      const vsSource = `#version 300 es
+      in vec4 aVertexPosition;
+      uniform mat4 uModelViewMatrix;
+      uniform mat4 uProjectionMatrix;
+      out highp vec2 delta;
+      void main() {
+        gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+        delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+      }
+      `;
+      // Note: The fragment shader now includes uniforms for the masking heuristic.
+      const fsSource = `#version 300 es
+        precision highp float;
+        in highp vec2 delta;
+        out vec4 fragColor;
+        uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
+        uniform float uColorMax;     // Fixed iteration count for colouring.
+        uniform bool uUseHeuristic;
+        uniform sampler2D uLowResMask;
+        uniform vec2 uLowResDim;
+        uniform vec2 uFinalDim;
+        uniform vec4 poly1;
+        uniform vec4 poly2;
+        uniform sampler2D sequence;
+        float get_orbit_x(int i) {
+          i = i * 3;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        float get_orbit_y(int i) {
+          i = i * 3 + 1;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        float get_orbit_scale(int i) {
+          i = i * 3 + 2;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        void main() {
+          // If the masking heuristic is enabled, and this pixel (via low-res mask) is black, output black.
+          if (uUseHeuristic) {
+            vec2 uv = gl_FragCoord.xy / uFinalDim;
+            if (texture(uLowResMask, uv).r > 0.5) {
+              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+              return;
+            }
+          }
+          float q = uState[2] - 1.0;
+          float cq = q;
+          q = q + poly2[3];
+          float S = pow(2.0, q);
+          float dcx = delta[0];
+          float dcy = delta[1];
+          float x;
+          float y;
+          float sqrx = (dcx * dcx - dcy * dcy);
+          float sqry = (2.0 * dcx * dcy);
+          float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;      
+          float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
+          int k = int(poly2[2]);
+          int j = k;
+          x = get_orbit_x(k);
+          y = get_orbit_y(k);
+          for (int i = k; float(i) < uState[3]; i++) {
+            j++; k++;
+            float os = get_orbit_scale(k - 1);
+            dcx = delta[0] * pow(2.0, -q + cq - os);
+            dcy = delta[1] * pow(2.0, -q + cq - os);
+            float unS = pow(2.0, q - os);
+            if (isinf(unS)) unS = 0.0;
+            float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
+            dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
+            dx = tx;
+            q = q + os;
+            S = pow(2.0, q);
+            x = get_orbit_x(k);
+            y = get_orbit_y(k);
+            float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
+            float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
+            if (fx * fx + fy * fy > 4.0) break;
+            if (dx * dx + dy * dy > 1000000.0) {
+              dx /= 2.0;
+              dy /= 2.0;
+              q = q + 1.0;
+              S = pow(2.0, q);
+              dcx = delta[0] * pow(2.0, -q + cq);
+              dcy = delta[1] * pow(2.0, -q + cq);
+            }
+            if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
+              dx = fx;
+              dy = fy;
+              q = 0.0;
+              S = pow(2.0, q);
+              dcx = delta[0] * pow(2.0, -q + cq);
+              dcy = delta[1] * pow(2.0, -q + cq);
+              k = 0;
+              x = get_orbit_x(0);
+              y = get_orbit_y(0);
+            }
+          }
+          float c_old = (uState[3] - float(j)) / uState[1];
+          vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
+          if (length(col_old) < 0.001) {
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          } else {
+            float c_new = (uColorMax - float(j)) / uState[1];
+            vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
+            fragColor = vec4(col_new, 1.0);
+          }
+        }
+      `;
+
+      function computeLayoutAndMatrices(canvas) {
+        const aspect = canvas.clientWidth / canvas.clientHeight;
+        const layout = aspect >= 1 ?
+          [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
+          [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
+          
+        const projectionMatrix = mat4.create();
+        if (aspect >= 1)
+          mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
+        else
+          mat4.ortho(projectionMatrix, -1, 1, -1 / aspect, 1 / aspect, -1, 1);
+        const modelViewMatrix = mat4.create();
+        return { layout, projectionMatrix, modelViewMatrix };
+      }
+
+      function initBuffers(gl, canvas) {
+        const { layout } = computeLayoutAndMatrices(canvas);
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
+        return { position: positionBuffer };
+      }
+
+      // Purpose is avoid computing costly black pixels completely surrounded by other black pixels
+      // Run with lower resolution than final image, to create mask applied to final image
+      function createMask(gl, programInfo, resWidth, resHeight) {
+        // Create a temporary texture and FBO for the heuristic pass.
+        const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+        const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+        drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
+          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
+        });
+        const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+        gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const mask = new Uint8Array(resWidth * resHeight);
+        for (let y = 1; y < resHeight - 1; y++) {
+          for (let x = 1; x < resWidth - 1; x++) {
+            let allBlack = true;
+            for (let j = -1; j <= 1 && allBlack; j++) {
+              for (let i = -1; i <= 1; i++) {
+                const idx = 4 * ((y + j) * resWidth + (x + i));
+                if (!(pixelBuffer[idx] === 0 &&
+                      pixelBuffer[idx + 1] === 0 &&
+                      pixelBuffer[idx + 2] === 0 &&
+                      pixelBuffer[idx + 3] === 255)) {
+                  allBlack = false;
+                  break;
+                }
+              }
+            }
+            mask[y * resWidth + x] = allBlack ? 255 : 0;
+          }
+        }
+        gl.deleteFramebuffer(heuristicFbo);
+        gl.deleteTexture(heuristicTex);
+        return { mask, width: resWidth, height: resHeight };
+      }
+
+      /* ------------------ Orbit Calculation ------------------ */
+      // Computes a reference orbit using high-precision arithmetic.
+      function createReferenceOrbit(mandelbrot_state) {
+        const cx = mandelbrot_state.center[0],
+              cy = mandelbrot_state.center[1];
+        let x = mpfr_zero(), y = mpfr_zero();
+        const orbit = new Float32Array(1024 * 1024);
+        orbit.fill(-1);
+        const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
+        let polylim = 0,
+            Bx = [0, 0], By = [0, 0],
+            Cx = [0, 0], Cy = [0, 0],
+            Dx = [0, 0], Dy = [0, 0],
+            poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],            
+            not_failed = true;
+        for (let i = 0; i < mandelbrot_state.iterations; i++) {
+          const x_exponent = binding.mpfr_get_exp(x);
+          const y_exponent = binding.mpfr_get_exp(y);
+          let scale_exponent = Math.max(x_exponent, y_exponent);
+          if (scale_exponent < -10000) scale_exponent = 0;
+          let tmp = 0;
+          orbit[3 * i]     = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
+          orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
+          orbit[3 * i + 2] = scale_exponent;
+          const fx = [orbit[3 * i], orbit[3 * i + 2]];
+          const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
+          binding.mpfr_mul(txx, x, x, 0);
+          binding.mpfr_mul(txy, x, y, 0);
+          binding.mpfr_mul(tyy, y, y, 0);
+          binding.mpfr_sub(x, txx, tyy, 0);
+          binding.mpfr_add(x, x, cx, 0);
+          binding.mpfr_add(y, txy, txy, 0);
+          binding.mpfr_add(y, y, cy, 0);
+          const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
+          [Bx, By, Cx, Cy, Dx, Dy] = [
+            add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
+            mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
+            sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
+            add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
+            mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
+            mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
+          ];
+          tmp = 0;
+          const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
+          const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
+          if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(mandelbrot_state.radius)], maxabs(Dx, Dy)))) {
+            if (not_failed) {
+              poly = prev_poly;
+              polylim = i;
+            }
+          } else {
+            not_failed = false;
+          }
+          if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
+        }
+        return [orbit, poly, polylim];
+      }
+
+      function renderLowRes(gl, programInfo, canvas, scaleFactor) {
+        const lowWidth = Math.floor(canvas.clientWidth / scaleFactor);
+        const lowHeight = Math.floor(canvas.clientHeight / scaleFactor);
+        const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
+        const maskTex = createAndSetupTexture(gl, 2, lowWidth, lowHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+        // Draw final pass using the low-res mask.
+        drawPass(gl, null, canvas.clientWidth, canvas.clientHeight, () => {
+          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+          gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+          gl.uniform2f(programInfo.uniformLocations.uLowResDim, lowWidth, lowHeight);
+          gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.clientWidth, canvas.clientHeight);
+        });
+        gl.deleteTexture(maskTex);
+      }
+
+      function renderHighRes(gl, programInfo, canvas, scaleFactor) {
+        const finalWidth = Math.floor(canvas.clientWidth / scaleFactor);
+        const finalHeight = Math.floor(canvas.clientHeight / scaleFactor);
+        const maskRes = Math.floor(finalWidth / scaleFactor);
+        const { mask, width: mWidth, height: mHeight } = createMask(gl, programInfo, maskRes, Math.floor(finalHeight / scaleFactor));
+        const maskTex = createAndSetupTexture(gl, 2, mWidth, mHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+        const finalTex = createAndSetupTexture(gl, 4, finalWidth, finalHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+        const finalFbo = createFramebufferForTexture(gl, finalTex);
+        drawPass(gl, finalFbo, finalWidth, finalHeight, () => {
+          gl.uniform2f(programInfo.uniformLocations.uFinalDim, finalWidth, finalHeight);
+          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+          gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+        });
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.clientWidth, canvas.clientHeight);
+        gl.blitFramebuffer(
+          0, 0, finalWidth, finalHeight,
+          0, 0, canvas.clientWidth, canvas.clientHeight,
+          gl.COLOR_BUFFER_BIT, gl.NEAREST
+        );
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(finalFbo);
+        gl.deleteTexture(finalTex);
+        gl.deleteTexture(maskTex);
+      }
+
+      /**
+       * Renders the Mandelbrot set on the provided canvas.
+       *
+       * @param {HTMLCanvasElement} canvas - The canvas element where the Mandelbrot set will be drawn.
+       * @param {Decimal} x - The x-coordinate of the Mandelbrot center (must be a Decimal instance).
+       * @param {Decimal} y - The y-coordinate of the Mandelbrot center (must be a Decimal instance).
+       * @param {Decimal} r - The radius/zoom magnification for the Mandelbrot set calculation (must be a Decimal instance).
+       * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
+       * @param {number} cmapscale - The scale factor applied to the color map for shading.
+       * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
+       * @param {Object} [options={}] - Optional parameters for rendering.
+       * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
+       * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
+       *
+       * @returns {void}
+       */
+      function render(canvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {    
+        const mandelbrot_state = {
+          center: [mpfr_zero(), mpfr_zero()],
+          radius: mpfr_zero(),
+          iterations,
+          cmapscale,
+          colorMax,
+          set(x, y, r) {
+            if (!(x instanceof Decimal) || !(y instanceof Decimal) || !(r instanceof Decimal))
+              throw new Error("Parameters x, y, r must be Decimal instances.");
+            binding.mpfr_set_string(this.center[0], x.toString(), 10, 0);
+            binding.mpfr_set_string(this.center[1], y.toString(), 10, 0);
+            binding.mpfr_set_string(this.radius, r.toString(), 10, 0);
+          }
+        };
+        mandelbrot_state.set(x, y, r);
+
+        // Initialize WebGL context.
+        const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+        if (!gl) throw new Error("WebGL2 not supported.");
+
+        const useLowRes = options.lowRes === true;
+        const scaleFactor = options.scaleFactor || 3;
+
+        // Compute matrices and buffers.
+        const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
+        const buffers = initBuffers(gl, canvas);
+
+        // Set up shader program.
+        const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+        const programInfo = {
+          program: shaderProgram,
+          attribLocations: {
+            vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
+          },
+          uniformLocations: {
+            projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
+            modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
+            uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
+            uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
+            uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
+            uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
+            state: gl.getUniformLocation(shaderProgram, "uState"),
+            colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
+            poly1: gl.getUniformLocation(shaderProgram, "poly1"),
+            poly2: gl.getUniformLocation(shaderProgram, "poly2"),
+            sequence: gl.getUniformLocation(shaderProgram, "sequence")
+          }
+        };
+
+        // Set up vertex data.
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+        gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+        gl.useProgram(programInfo.program);
+        gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+
+        // Compute and load the orbit texture.
+        const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
+        createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
+
+        // Set Mandelbrot state uniforms.
+        const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
+        const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
+        gl.uniform4f(
+          programInfo.uniformLocations.state,
+          mandelbrot_state.center[0],
+          mandelbrot_state.cmapscale,
+          1 + get_exp(mandelbrot_state.radius),
+          mandelbrot_state.iterations
+        );
+        if (mandelbrot_state.colorMax !== undefined)
+          gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
+
+        // Compute polynomial scaling.
+        const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
+        const poly_scale = [1, -poly_scale_exp[1]];
+        const poly_scaled = [
+          mul(poly_scale, poly[0]),
+          mul(poly_scale, poly[1]),
+          mul(poly_scale, mul([r_val, rexp], poly[2])),
+          mul(poly_scale, mul([r_val, rexp], poly[3])),
+          mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
+          mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
+        ].map(floaty);
+        gl.uniform4f(
+          programInfo.uniformLocations.poly1,
+          poly_scaled[0],
+          poly_scaled[1],
+          poly_scaled[2],
+          poly_scaled[3]
+        );
+        gl.uniform4f(
+          programInfo.uniformLocations.poly2,
+          poly_scaled[4],
+          poly_scaled[5],
+          polylim,
+          poly_scale_exp[1]
+        );
+
+        // Delegate rendering based on resolution setting.
+        if (!useLowRes)
+          renderLowRes(gl, programInfo, canvas, scaleFactor);
+        else
+          renderHighRes(gl, programInfo, canvas, scaleFactor);
+      }
+
+      return render;
+    }
 
     function debounce(fn, ms) {
       let t;
@@ -250,355 +758,66 @@
       }
     }
 
-    class MandelbrotComputer {
-      gl = undefined;
-      canvasEl;
-      quadBuffer = null;
-      refOrbitTexture = null;
-      program = null;
-      uniformLocations = {};
-
-      // Low-res framebuffer objects (for lowQuality mode)
-      lowResFramebuffer = null;
-      lowResTexture = null;
-
-      constructor(canvasEl) {
-        this.canvasEl = canvasEl;
-        const gl = this.canvasEl.getContext("webgl2", { preserveDrawingBuffer: true, antialias: false });
-        if (!gl) {
-          console.error("WebGL2 is not available.");
-          alert("WebGL2 is not available.");
-          return;
-        }
-        this.gl = gl;
-        this.initShaders();
-      }
-
-      initShaders() {
-        const gl = this.gl;
-        const vsSource = `#version 300 es
-          in vec2 a_position;
-          void main() {
-            gl_Position = vec4(a_position, 0.0, 1.0);
-          }
-        `;
-        const fsSource = `#version 300 es
-          precision highp float;
-          uniform vec2  u_resolution;
-          uniform vec2  u_fullResolution;
-          uniform float u_centerX;
-          uniform float u_centerY;
-          uniform float u_scale;
-          uniform int   u_maxIter;
-          uniform int   u_maxIterDefault;
-          uniform float u_bailout;
-          uniform int   u_refLength;
-          uniform float u_colorChoice;
-          uniform sampler2D u_refOrbitTex;
-          uniform int u_lowQuality;
-          out vec4 fragColor;
-
-          vec2 getRef(int i) {
-            float fi  = float(i) + 0.5;
-            float len = float(u_refLength);
-            return texture(u_refOrbitTex, vec2(fi / len, 0.5)).rg;
-          }
-
-          void main() {
-            vec2 coord;
-            if(u_lowQuality == 1) {
-              vec2 lowResCoord = vec2(gl_FragCoord.x + 0.5, gl_FragCoord.y + 0.5);
-              lowResCoord.y = u_resolution.y - lowResCoord.y;
-              coord = lowResCoord * (u_fullResolution / u_resolution) - vec2(0.5, 0.5);
-            } else {
-              coord = vec2(gl_FragCoord.x, u_fullResolution.y - gl_FragCoord.y);
-            }
-
-            vec2 dc = (coord - u_fullResolution * 0.5) / u_scale;
-            vec2 dz = vec2(0.0);
-            int refIndex = 0;
-            int iteration = 0;
-            int maxRefIteration = u_refLength - 1;
-
-            for (int i = 0; i < 10000; i++) {
-              if (iteration >= u_maxIter) break;
-              vec2 refVal = getRef(refIndex);
-              vec2 term1 = vec2(
-                2.0 * (dz.x * refVal.x - dz.y * refVal.y),
-                2.0 * (dz.x * refVal.y + dz.y * refVal.x)
-              );
-              vec2 term2 = vec2(dz.x * dz.x - dz.y * dz.y, 2.0 * dz.x * dz.y);
-              dz = term1 + term2 + dc;
-              refIndex++;
-              if (refIndex >= u_refLength) break;
-              vec2 z = getRef(refIndex) + dz;
-              if (dot(z, z) > u_bailout) break;
-              if (length(z) < length(dz) || refIndex == maxRefIteration) {
-                dz = z;
-                refIndex = 0;
-              }
-              iteration++;
-            }
-
-            float smoothIter = float(iteration);
-            if (iteration < u_maxIter) {
-              float lenz = length(getRef(refIndex) + dz);
-              smoothIter += 1.0 - log(log(lenz)) / log(2.0);
-            }
-            float invColor = 1.0 / u_colorChoice;
-            float cval = (smoothIter - float(u_maxIterDefault)) * invColor;
-            float r = floor(255.0 * (0.5 - cos(cval) / 2.0));
-            float g = floor(255.0 * (0.5 - cos(1.1214 * cval) / 2.0));
-            float b = floor(255.0 * (0.5 - cos(0.8 * cval) / 2.0));
-
-            fragColor = (iteration >= u_maxIter)
-                        ? vec4(0.0, 0.0, 0.0, 1.0)
-                        : vec4(r / 255.0, g / 255.0, b / 255.0, 1.0);
-          }
-        `;
-        const vertexShader = this.compileShader(gl.VERTEX_SHADER, vsSource);
-        const fragmentShader = this.compileShader(gl.FRAGMENT_SHADER, fsSource);
-        this.program = this.createProgram(vertexShader, fragmentShader);
-        if (!this.program) {
-          console.error("Failed to create shader program.");
-          return;
-        }
-        this.uniformLocations = {
-          resolution:      gl.getUniformLocation(this.program, "u_resolution"),
-          fullResolution:  gl.getUniformLocation(this.program, "u_fullResolution"),
-          centerX:         gl.getUniformLocation(this.program, "u_centerX"),
-          centerY:         gl.getUniformLocation(this.program, "u_centerY"),
-          scale:           gl.getUniformLocation(this.program, "u_scale"),
-          maxIter:         gl.getUniformLocation(this.program, "u_maxIter"),
-          maxIterDefault:  gl.getUniformLocation(this.program, "u_maxIterDefault"),
-          bailout:         gl.getUniformLocation(this.program, "u_bailout"),
-          refLength:       gl.getUniformLocation(this.program, "u_refLength"),
-          colorChoice:     gl.getUniformLocation(this.program, "u_colorChoice"),
-          refOrbitTex:     gl.getUniformLocation(this.program, "u_refOrbitTex"),
-          lowQuality:      gl.getUniformLocation(this.program, "u_lowQuality")
-        };
-      }
-
-      compileShader(type, source) {
-        const gl = this.gl;
-        const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-          console.error("Shader compile error:", gl.getShaderInfoLog(shader));
-          gl.deleteShader(shader);
-          return null;
-        }
-        return shader;
-      }
-
-      createProgram(vs, fs) {
-        const gl = this.gl;
-        const program = gl.createProgram();
-        if (!program || !vs || !fs) return null;
-        gl.attachShader(program, vs);
-        gl.attachShader(program, fs);
-        gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-          console.error("Program link error:", gl.getProgramInfoLog(program));
-          gl.deleteProgram(program);
-          return null;
-        }
-        return program;
-      }
-
-      computeReferenceOrbit(maxIter, centerX, centerY) {
-        const bailout = new Decimal(4);
-        let refOrbit = [{ re: 0, im: 0 }];
-        let z_re = new Decimal(0), z_im = new Decimal(0);
-        for (let i = 0; i < maxIter; i++) {
-          const new_re = z_re.mul(z_re).sub(z_im.mul(z_im)).add(centerX);
-          const new_im = z_re.mul(z_im).mul(2).add(centerY);
-          z_re = new_re; z_im = new_im;
-          refOrbit.push({ re: z_re, im: z_im });
-          if (z_re.mul(z_re).add(z_im.mul(z_im)).gt(bailout)) break;
-        }
-        return refOrbit;
-      }
-
-      updateRefOrbitTexture(refOrbit) {
-        const gl = this.gl;
-        const len = refOrbit.length;
-        const data = new Float32Array(len * 2);
-        refOrbit.forEach((pt, i) => {
-          data[2 * i] = pt.re;
-          data[2 * i + 1] = pt.im;
-        });
-        if (!this.refOrbitTexture) {
-          this.refOrbitTexture = gl.createTexture();
-        }
-        gl.bindTexture(gl.TEXTURE_2D, this.refOrbitTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, len, 1, 0, gl.RG, gl.FLOAT, data);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        return len;
-      }
-
-      // Sets up the quad buffer if not already done.
-      setupQuadBuffer() {
-        const gl = this.gl;
-        if (!this.quadBuffer) {
-          this.quadBuffer = gl.createBuffer();
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-          const vertices = new Float32Array([
-            -1, -1,  1, -1,  -1,  1,
-            -1,  1,  1, -1,   1,  1,
-          ]);
-          gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
-        } else {
-          gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
-        }
-        const posLoc = gl.getAttribLocation(this.program, "a_position");
-        gl.enableVertexAttribArray(posLoc);
-        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-      }
-
-      // Applies uniforms and draws the scene.
-      renderScene(resWidth, resHeight, fullWidth, fullHeight,
-                  centerX, centerY, scale, maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag) {
-        const gl = this.gl;
-        gl.useProgram(this.program);
-        gl.uniform2f(this.uniformLocations.resolution, resWidth, resHeight);
-        gl.uniform2f(this.uniformLocations.fullResolution, fullWidth, fullHeight);
-        gl.uniform1f(this.uniformLocations.centerX, centerX);
-        gl.uniform1f(this.uniformLocations.centerY, centerY);
-        gl.uniform1f(this.uniformLocations.scale, scale);
-        gl.uniform1i(this.uniformLocations.maxIter, maxIter);
-        gl.uniform1i(this.uniformLocations.maxIterDefault, maxIterDefault);
-        gl.uniform1f(this.uniformLocations.bailout, 4.0);
-        gl.uniform1i(this.uniformLocations.refLength, refLen);
-        gl.uniform1f(this.uniformLocations.colorChoice, colorChoice);
-        gl.uniform1i(this.uniformLocations.lowQuality, lowQualityFlag);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.refOrbitTexture);
-        gl.uniform1i(this.uniformLocations.refOrbitTex, 0);
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
-
-      computeFractal(centerX, centerY, scale, maxIter, maxIterDefault, colorChoice, lowQuality = false) {
-        const gl = this.gl;
-        const fullWidth = this.canvasEl.width;
-        const fullHeight = this.canvasEl.height;
-        let resWidth = fullWidth, resHeight = fullHeight;
-        let lowQualityFlag = 0;
-
-        // If lowQuality is requested, render to a reduced resolution.
-        if (lowQuality) {
-          resWidth = Math.max(1, Math.floor(fullWidth / 3));
-          resHeight = Math.max(1, Math.floor(fullHeight / 3));
-          lowQualityFlag = 1;
-          if (!this.lowResFramebuffer) {
-            this.lowResFramebuffer = gl.createFramebuffer();
-            this.lowResTexture = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, this.lowResTexture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, resWidth, resHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowResFramebuffer);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.lowResTexture, 0);
-          } else {
-            gl.bindTexture(gl.TEXTURE_2D, this.lowResTexture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, resWidth, resHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, this.lowResFramebuffer);
-          }
-          gl.viewport(0, 0, resWidth, resHeight);
-        } else {
-          gl.viewport(0, 0, fullWidth, fullHeight);
-        }
-
-        this.setupQuadBuffer();
-
-        const refOrbit = this.computeReferenceOrbit(maxIter, centerX, centerY);
-        const refLen = this.updateRefOrbitTexture(refOrbit);
-
-        this.renderScene(
-          resWidth, resHeight, fullWidth, fullHeight, centerX.toNumber(), centerY.toNumber(), scale.toNumber(), maxIter, maxIterDefault, colorChoice, refLen, lowQualityFlag
-        );
-
-        if (lowQuality) {
-          // Blit the low-res framebuffer to the main canvas.
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.lowResFramebuffer);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-          gl.blitFramebuffer(
-            0, 0, resWidth, resHeight,
-            0, 0, fullWidth, fullHeight,
-            gl.COLOR_BUFFER_BIT,
-            gl.LINEAR
-          );
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.viewport(0, 0, fullWidth, fullHeight);
-        }
-      }
-    }
-
     class MandelbrotExplorer extends Component {                 
       defaultCenterX = new Decimal(-0.75)
       defaultCenterY = new Decimal(0.0)
-      defaultWidth = new Decimal(3.5)
-      defaultHeight = new Decimal(2)
       defaultZ = new Decimal(1)                        
       centerX = undefined
       centerY = undefined;   
       z = undefined;  
+      pleasantCanvasRatio
       
       canvasWidth = window.innerWidth;
       canvasHeight = window.innerHeight;
-      defaultCanvasScale = undefined;
 
       maxIterDefault = 1200;
       maxIter = this.maxIterDefault;
+      colorMax = 1200;
       colorChoice = 24.2;
-      animating = false;
+      zoomAnimationsEnabled = true;
+      animating = false;      
       zoomOutFactor = 2;
-      maxCanvasScale = new Decimal("5e37")
-
-      offscreenCanvas = document.createElement("canvas");    
+      maxZ = new Decimal("1e"+PRECISION)
+      prevZ = 1;
+      
       zoomStack = [];
       zoomDuration = 600;
 
       tip = new Tip();
       marquee = new Marquee();
-      mandelbrotComputer = undefined;
+      mandelbrotRender = undefined;
 
-      get canvasScale () { return this.z.times(this.defaultCanvasScale); }
-      set canvasScale (value) { this.z = value.dividedBy(this.defaultCanvasScale) }      
-      get zoomAnimationsEnabled() { return this.maxIter <= this.maxIterDefault; }
+      get zActual () { return this.z.times(this.pleasantCanvasRatio); }
+      set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }            
 
       attached() {        
         setTimeout(() => this.init(), 1);
         window.addEventListener("resize", debounce(() => this.updateLayout(), 100));
       }
 
-      init() {
-        this.mandelbrotComputer = new MandelbrotComputer(this.offscreenCanvas);        
+      async init() {
+        this.mandelbrotRender = await createMandelbrotRenderer();        
         this.marquee.onStart = () => this.tip.show();
         this.marquee.onEnd = rect => this.processMarquee(rect);
         this.updateLayout(() => this.initFromURL());
       }
 
       updateLayout(afterLayout) {        
-        this.canvasWidth = this.offscreenCanvas.width =this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
-        this.canvasHeight = this.offscreenCanvas.height =this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;  
-        
-        this.defaultCanvasScale = new Decimal ((this.canvasWidth / this.canvasHeight >= this.defaultWidth.dividedBy(this.defaultHeight).toNumber())
-          ? (this.canvasHeight / this.defaultHeight * 0.8)
-          : this.canvasWidth / this.defaultWidth);
-        
+        this.canvasWidth = this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
+        this.canvasHeight = this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;  
+
+        this.pleasantCanvasRatio = this.canvasWidth / this.canvasHeight >= 1 ? 0.8 : 0.6;
+
         if (afterLayout)
           afterLayout();
 
-        this.computeFractal();
+        this.renderFractal();
       }
 
       initFromURL() {
         this.update(() => {
           this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
-          this.centerY = getNumericParam ("y", d => new Decimal(d).times(-1), this.defaultCenterY);
+          this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
           this.z = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
           this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
         })        
@@ -621,29 +840,41 @@
         } else {                    
           const params = new URLSearchParams();
           const sf = this.z.toFixed(2).length;
-          params.set("x", this.centerX.toSignificantDigits(sf).toString());
-          params.set("y", this.centerY.toSignificantDigits(sf).times(-1).toString());
           params.set("z", this.zArg());
           params.set("iterations", this.maxIter);
+          params.set("x", this.centerX.toSignificantDigits(sf).toString());
+          params.set("y", this.centerY.toSignificantDigits(sf).toString());          
           history.replaceState(null, "", window.location.pathname + "?" + params.toString());
         }
       }
 
-      toggleMode() {
+      toggleAnimation() {
         if (this.animating) return;
         this.update(() => {      
-          this.maxIter = this.maxIter <= this.maxIterDefault ? 9600 : this.maxIterDefault;          
+          this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
+          this.zoomStack = []
         });
-        setTimeout (() => this.computeFractal(), 1); 
       }
 
-      computeFractal() {
-        this.mandelbrotComputer.computeFractal(
-          this.centerX, this.centerY, this.canvasScale, this.maxIter, this.maxIterDefault, this.colorChoice, this.animating
-        );        
-        const mainCtx = this.canvasEl.getContext("2d");
-        mainCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-        mainCtx.drawImage(this.offscreenCanvas, 0, 0);
+      dynamicMaxIter() {
+        const depth = this.z.logarithm(2).toNumber() + 1;        
+        const iter = Math.max (1200, 1000 * Math.floor(depth / 10));
+        return Number(iter.toPrecision(2));
+      }
+
+      autoAdjustMaxIter() {
+        const idealMaxIter = this.dynamicMaxIter()
+        if ((this.z.greaterThan(this.prevZ) && this.maxIter < idealMaxIter) ||
+            (this.z.lessThan(this.prevZ)    && this.maxIter > idealMaxIter)) {
+          this.maxIter = idealMaxIter          
+        }
+        this.prevZ = this.z
+      }
+
+      renderFractal() { 
+        this.autoAdjustMaxIter()
+        const z = new Decimal(1).dividedBy(this.zActual)        
+        this.mandelbrotRender (this.canvasEl, this.centerX, this.centerY, z, this.maxIter, this.colorChoice, this.colorMax, {lowRes: this.animating});
         if (! this.animating)
           this.updateURL();
       }
@@ -653,50 +884,49 @@
         if (width < 5 || height < 5) return;
         this.tip.hide();
 
-        const canvasCenter = {
-          x: new Decimal(this.canvasWidth).dividedBy(2),
-          y: new Decimal(this.canvasHeight).dividedBy(2)
+        const aspect = this.canvasWidth / this.canvasHeight;
+        
+        const pixelToFractal = (px, py) => {
+            const normX = (px + 0.5) / this.canvasWidth;
+            const normY = (py + 0.5) / this.canvasHeight;                        
+            const canvasX = normX * (aspect >= 1 ? 2 * aspect : 2) + (aspect >= 1 ? -aspect : -1);
+            const canvasY = normY * (aspect >= 1 ? -2 : -2 / aspect) + (aspect >= 1 ? 1 : 1 / aspect);            
+            const fractalX = this.centerX.plus(new Decimal(canvasX).dividedBy(this.zActual));
+            const fractalY = this.centerY.plus(new Decimal(canvasY).dividedBy(this.zActual));
+            return { x: fractalX, y: fractalY };
         };
 
-        const canvasRect = {
-          x1: new Decimal(left),
-          y1: new Decimal(top),
-          x2: new Decimal(left).plus(width),
-          y2: new Decimal(top).plus(height)
-        };
+        const p1 = pixelToFractal(left, top);
+        const p2 = pixelToFractal(left + width, top + height);
 
-        const fractalRect = {
-          x1: this.centerX.plus(canvasRect.x1.minus(canvasCenter.x).dividedBy(this.canvasScale)),
-          y1: this.centerY.plus(canvasRect.y1.minus(canvasCenter.y).dividedBy(this.canvasScale)),
-          x2: this.centerX.plus(canvasRect.x2.minus(canvasCenter.x).dividedBy(this.canvasScale)),
-          y2: this.centerY.plus(canvasRect.y2.minus(canvasCenter.y).dividedBy(this.canvasScale))
-        };
+        const newCenterX = p1.x.plus(p2.x).dividedBy(2);
+        const newCenterY = p1.y.plus(p2.y).dividedBy(2);
 
-        const rectWidth = fractalRect.x2.minus(fractalRect.x1);
-        const rectHeight = fractalRect.y2.minus(fractalRect.y1);
-        const newCenterX = fractalRect.x1.plus(fractalRect.x2).dividedBy(2);
-        const newCenterY = fractalRect.y1.plus(fractalRect.y2).dividedBy(2);
+        const fractalWidth = p2.x.minus(p1.x).abs();
+        const fractalHeight = p1.y.minus(p2.y).abs(); // p1.y is top, p2.y is bottom
 
-        const newScaleX = new Decimal(this.canvasWidth).dividedBy(rectWidth);
-        const newScaleY = new Decimal(this.canvasHeight).dividedBy(rectHeight);
-        const newScale = Decimal.min(newScaleX, newScaleY);
+        const newActualWidth = fractalWidth.dividedBy(aspect >= 1 ? (2 * aspect) : 2);
+        const newActualHeight = fractalHeight.dividedBy(aspect >= 1 ? 2 : (2 / aspect));
+
+        const newR = Decimal.max(newActualWidth, newActualHeight);
+        const newZActual = new Decimal(1).dividedBy(newR);
 
         if (!this.zoomAnimationsEnabled) {
-          this.centerX = newCenterX;
-          this.centerY = newCenterY;
-          this.canvasScale = newScale;
-          this.computeFractal();
+            this.centerX = newCenterX;
+            this.centerY = newCenterY;
+            this.zActual = newZActual;
+            this.renderFractal();
         } else {
-          const prevState = { centerX: this.centerX, centerY: this.centerY, scale: this.canvasScale };
-          const targetState = { centerX: newCenterX, centerY: newCenterY, scale: newScale };
-          this.zoomStack.push({ prevState, targetState });
-          this.animateZoom(prevState, targetState);
+            const prevState = { centerX: this.centerX, centerY: this.centerY, zActual: this.zActual };
+            const targetState = { centerX: newCenterX, centerY: newCenterY, zActual: newZActual };
+            this.zoomStack.push({ prevState, targetState });
+            this.animateZoom(prevState, targetState);
         }
-      }
+    }
 
-      animateZoom(fromState, toState) {
+    animateZoom(fromState, toState) {
         this.animating = true;
-        const zoom = toState.scale.dividedBy(fromState.scale);
+        const zoom = toState.zActual.dividedBy(fromState.zActual);
         const startTime = performance.now();
 
         const animateFrame = now => {
@@ -709,12 +939,12 @@
           // Linearly interpolate the center position based on the factor
           this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
           this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
-          this.canvasScale = fromState.scale.times(interpolatedZoomFactor);
+          this.zActual = fromState.zActual.times(interpolatedZoomFactor);
 
           if (t === 1) {
             this.animating = false;
           }
-          this.computeFractal();
+          this.renderFractal();
           if (t < 1) {
             requestAnimationFrame(animateFrame);
           }
@@ -733,15 +963,15 @@
           this.animateZoom(zoomEntry.targetState, zoomEntry.prevState);
           return;
         }
-        let newScale = this.canvasScale.dividedBy(this.zoomOutFactor);
-        if (!this.zoomAnimationsEnabled && newScale.greaterThan(this.maxCanvasScale)) {
-          newScale = this.maxCanvasScale;
+        let newZ = this.z.dividedBy(this.zoomOutFactor);
+        if (!this.zoomAnimationsEnabled && newZ.greaterThan(this.maxZ)) {
+          newZ = this.maxZ;
         }
-        if (newScale.lessThanOrEqualTo(this.defaultCanvasScale)) {
+        if (newZ.lessThanOrEqualTo(this.defaultZ)) {
           this.reset();
         } else {
-          this.canvasScale = newScale;
-          this.computeFractal();
+          this.z = newZ;
+          this.renderFractal();
         }
       }
 
@@ -752,9 +982,10 @@
           this.z = this.defaultZ;
           this.centerX = this.defaultCenterX;
           this.centerY = this.defaultCenterY;          
-          this.maxIter = this.maxIterDefault;          
+          this.maxIter = this.maxIterDefault; 
+          this.zoomAnimationsEnabled = true;         
         })
-        setTimeout (() => this.computeFractal(), 1);
+        setTimeout (() => this.renderFractal(), 1);
       }
 
       saveImage() {
@@ -783,7 +1014,7 @@
             h1({ class: "title" }, "Mandelbrot Explorer"),
             div({ class: "controls" },
               button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
-              button({ class: "controlButton", onclick: () => this.toggleMode() }, this.zoomAnimationsEnabled ? "Fast" : "Deep"),
+              button({ class: "controlButton", onclick: () => this.toggleAnimation() }, this.zoomAnimationsEnabled ? "Animated" : "Still"),
               button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
               button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out")
             )
