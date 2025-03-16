@@ -424,11 +424,11 @@
       gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
     });
 
+    // copy WebGL image to local image because reading pixels across JS/WebGL boundary is very slow
     const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
     gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
     const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
     offscreenContext.putImageData(imageData, 0, 0);
 
@@ -436,8 +436,9 @@
     for (let y = 1; y < resHeight - 1; y++) {
       for (let x = 1; x < resWidth - 1; x++) {
         let allBlack = true;
-        for (let j = -1; j <= 1 && allBlack; j+=2) {
-          for (let i = -1; i <= 1; i+=2) {
+        // conservative masking: only mask a pixel if it AND all of its neighbours are black
+        for (let j = -1; j <= 1 && allBlack; j++) { 
+          for (let i = -1; i <= 1; i++) {
             const idx = 4 * ((y + j) * resWidth + (x + i));
             if (!(pixelBuffer[idx] === 0 &&
                   pixelBuffer[idx + 1] === 0 &&
