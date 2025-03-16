@@ -767,7 +767,7 @@
       canvasWidth = window.innerWidth;
       canvasHeight = window.innerHeight;
 
-      maxIterDefault = 1200;
+      maxIterDefault = 1000;
       maxIter = this.maxIterDefault;
       colorMax = 1200;
       colorChoice = 24.2;
@@ -775,7 +775,7 @@
       animating = false;      
       zoomOutFactor = 2;
       maxZ = new Decimal(1E300);
-      prevZ = new Decimal(1);
+      prevZ = undefined
       
       zoomStack = [];
       zoomDuration = 600;
@@ -815,8 +815,9 @@
         this.update(() => {
           this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
           this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
-          this.z = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
+          this.z = this.prevZ = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
           this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
+          this.zoomAnimationsEnabled = this.z.e < 20;
         })        
       }
 
@@ -854,15 +855,14 @@
       }
 
       dynamicMaxIter() {
-        const depth = this.z.logarithm(2).toNumber() + 1;        
-        const iter = Math.max (1200, 1000 * Math.floor(depth / 10));
+        const iter = 1000 + (150 * Math.round(this.z.e));
         return Number(iter.toPrecision(2));
       }
 
       autoAdjustMaxIterAndPrecision() {
         const idealMaxIter = this.dynamicMaxIter()
         if ((this.z.greaterThan(this.prevZ) && this.maxIter < idealMaxIter) ||
-            (this.z.lessThan(this.prevZ)    && this.maxIter > idealMaxIter)) {
+           (this.z.lessThan(this.prevZ)    && this.maxIter > idealMaxIter)) {
           this.maxIter = idealMaxIter          
         }
         Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 5 });
@@ -980,7 +980,7 @@
           this.centerX = this.defaultCenterX;
           this.centerY = this.defaultCenterY;          
           this.maxIter = this.maxIterDefault; 
-          this.zoomAnimationsEnabled = true;         
+          this.zoomAnimationsEnabled = true;   
         })
         setTimeout (() => this.renderFractal(), 1);
       }
