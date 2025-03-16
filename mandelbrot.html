@@ -113,7 +113,55 @@
 
     // algorithm adapted from Hastings Greer          
     async function createMandelbrotRenderer() {
-      const { binding } = await init(); // init() loads the mpfr binding
+      const { binding } = await init(); // Loads the MPFR binding
+
+      /* ------------------ WebGL Resource Initialization and Caching ------------------ */
+      let webglResources = null;
+
+      function fetchWebGLResources(canvas) {
+        if (webglResources) {
+          ensureSize()
+          return webglResources;
+        }
+
+        const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+        if (!gl) throw new Error("WebGL2 not supported.");
+        const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+        const programInfo = {
+          program: shaderProgram,
+          attribLocations: {
+            vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
+          },
+          uniformLocations: {
+            projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
+            modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
+            uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
+            uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
+            uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
+            uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
+            state: gl.getUniformLocation(shaderProgram, "uState"),
+            colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
+            poly1: gl.getUniformLocation(shaderProgram, "poly1"),
+            poly2: gl.getUniformLocation(shaderProgram, "poly2"),
+            sequence: gl.getUniformLocation(shaderProgram, "sequence")
+          }
+        };
+        const buffers = initBuffers(gl, canvas);
+        webglResources = { gl, programInfo, buffers, canvas };
+        return webglResources;
+      }
+
+      function ensureSize() {        
+        const { gl, canvas } = webglResources;
+        canvas.width = canvas.clientWidth;
+        canvas.height = canvas.clientHeight;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
+        webglResources.buffers = initBuffers(gl, canvas);
+        gl.useProgram(webglResources.programInfo.program);
+        gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+      }
 
       /* ------------------ Arithmetic Helpers ------------------ */
       function mpfr_zero() {
@@ -203,7 +251,6 @@
           throw new Error("Framebuffer not complete.");
         return fbo;
       }
-      // drawPass encapsulates a drawing call for a given framebuffer.
       function drawPass(gl, framebuffer, width, height, setUniforms) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.viewport(0, 0, width, height);
@@ -217,16 +264,15 @@
 
       /* ------------------ Shader Sources ------------------ */
       const vsSource = `#version 300 es
-      in vec4 aVertexPosition;
-      uniform mat4 uModelViewMatrix;
-      uniform mat4 uProjectionMatrix;
-      out highp vec2 delta;
-      void main() {
-        gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-        delta = vec2(aVertexPosition[0], aVertexPosition[1]);
-      }
+        in vec4 aVertexPosition;
+        uniform mat4 uModelViewMatrix;
+        uniform mat4 uProjectionMatrix;
+        out highp vec2 delta;
+        void main() {
+          gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+          delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+        }
       `;
-      // Note: The fragment shader now includes uniforms for the masking heuristic.
       const fsSource = `#version 300 es
         precision highp float;
         in highp vec2 delta;
@@ -256,7 +302,6 @@
           return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
         }
         void main() {
-          // If the masking heuristic is enabled, and this pixel (via low-res mask) is black, output black.
           if (uUseHeuristic) {
             vec2 uv = gl_FragCoord.xy / uFinalDim;
             if (texture(uLowResMask, uv).r > 0.5) {
@@ -329,12 +374,12 @@
         }
       `;
 
+      /* ------------------ Layout and Buffer Helpers ------------------ */
       function computeLayoutAndMatrices(canvas) {
         const aspect = canvas.clientWidth / canvas.clientHeight;
         const layout = aspect >= 1 ?
           [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
           [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
-          
         const projectionMatrix = mat4.create();
         if (aspect >= 1)
           mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
@@ -352,10 +397,11 @@
         return { position: positionBuffer };
       }
 
-      // Purpose is avoid computing costly black pixels completely surrounded by other black pixels
-      // Run with lower resolution than final image, to create mask applied to final image
+      /*
+        createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
+       * Run with lower resolution than final image, to create mask applied to final image
+       */
       function createMask(gl, programInfo, resWidth, resHeight) {
-        // Create a temporary texture and FBO for the heuristic pass.
         const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
         const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
         drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
@@ -390,7 +436,6 @@
       }
 
       /* ------------------ Orbit Calculation ------------------ */
-      // Computes a reference orbit using high-precision arithmetic.
       function createReferenceOrbit(mandelbrot_state) {
         const cx = mandelbrot_state.center[0],
               cy = mandelbrot_state.center[1];
@@ -402,7 +447,7 @@
             Bx = [0, 0], By = [0, 0],
             Cx = [0, 0], Cy = [0, 0],
             Dx = [0, 0], Dy = [0, 0],
-            poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],            
+            poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
             not_failed = true;
         for (let i = 0; i < mandelbrot_state.iterations; i++) {
           const x_exponent = binding.mpfr_get_exp(x);
@@ -447,12 +492,12 @@
         return [orbit, poly, polylim];
       }
 
+      /* ------------------ Rendering Passes ------------------ */
       function renderLowRes(gl, programInfo, canvas, scaleFactor) {
         const lowWidth = Math.floor(canvas.clientWidth / scaleFactor);
         const lowHeight = Math.floor(canvas.clientHeight / scaleFactor);
         const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
         const maskTex = createAndSetupTexture(gl, 2, lowWidth, lowHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-        // Draw final pass using the low-res mask.
         drawPass(gl, null, canvas.clientWidth, canvas.clientHeight, () => {
           gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
           gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
@@ -489,7 +534,7 @@
         gl.deleteTexture(maskTex);
       }
 
-      /**
+       /**
        * Renders the Mandelbrot set on the provided canvas.
        *
        * @param {HTMLCanvasElement} canvas - The canvas element where the Mandelbrot set will be drawn.
@@ -505,7 +550,10 @@
        *
        * @returns {void}
        */
-      function render(canvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {    
+      function render(canvas, x, y, r, iterations, cmapscale, colorMax, options = {})
+      {
+        const { gl, programInfo, buffers } = fetchWebGLResources(canvas);
+
         const mandelbrot_state = {
           center: [mpfr_zero(), mpfr_zero()],
           radius: mpfr_zero(),
@@ -522,52 +570,15 @@
         };
         mandelbrot_state.set(x, y, r);
 
-        // Initialize WebGL context.
-        const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
-        if (!gl) throw new Error("WebGL2 not supported.");
-
-        const useLowRes = options.lowRes === true;
-        const scaleFactor = options.scaleFactor || 3;
-
-        // Compute matrices and buffers.
         const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
-        const buffers = initBuffers(gl, canvas);
-
-        // Set up shader program.
-        const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
-        const programInfo = {
-          program: shaderProgram,
-          attribLocations: {
-            vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
-          },
-          uniformLocations: {
-            projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
-            modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
-            uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
-            uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
-            uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
-            uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
-            state: gl.getUniformLocation(shaderProgram, "uState"),
-            colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
-            poly1: gl.getUniformLocation(shaderProgram, "poly1"),
-            poly2: gl.getUniformLocation(shaderProgram, "poly2"),
-            sequence: gl.getUniformLocation(shaderProgram, "sequence")
-          }
-        };
-
-        // Set up vertex data.
         gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
         gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
         gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
         gl.useProgram(programInfo.program);
         gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
         gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
-
-        // Compute and load the orbit texture.
         const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
         createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
-
-        // Set Mandelbrot state uniforms.
         const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
         const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
         gl.uniform4f(
@@ -580,7 +591,8 @@
         if (mandelbrot_state.colorMax !== undefined)
           gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
 
-        // Compute polynomial scaling.
+        // Compute and update polynomial scaling here (if needed).
+        // For example:
         const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
         const poly_scale = [1, -poly_scale_exp[1]];
         const poly_scaled = [
@@ -606,11 +618,10 @@
           poly_scale_exp[1]
         );
 
-        // Delegate rendering based on resolution setting.
-        if (!useLowRes)
-          renderLowRes(gl, programInfo, canvas, scaleFactor);
+        if (!options.lowRes)
+          renderLowRes(gl, programInfo, canvas, options.scaleFactor || 3);
         else
-          renderHighRes(gl, programInfo, canvas, scaleFactor);
+          renderHighRes(gl, programInfo, canvas, options.scaleFactor || 3);
       }
 
       return render;
@@ -782,7 +793,7 @@
 
       tip = new Tip();
       marquee = new Marquee();
-      mandelbrotRender = undefined;
+      mandelbrotRenderer = undefined;
 
       get zActual () { return this.z.times(this.pleasantCanvasRatio); }
       set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }            
@@ -793,7 +804,7 @@
       }
 
       async init() {
-        this.mandelbrotRender = await createMandelbrotRenderer();        
+        this.mandelbrotRenderer = await createMandelbrotRenderer();        
         this.marquee.onStart = () => this.tip.show();
         this.marquee.onEnd = rect => this.processMarquee(rect);
         this.updateLayout(() => this.initFromURL());
@@ -877,7 +888,7 @@
           this.reset()
         }
         else {            
-          this.mandelbrotRender (this.canvasEl, this.centerX, this.centerY, z, this.maxIter, this.colorChoice, this.colorMax, {lowRes: this.animating});
+          this.mandelbrotRenderer (this.canvasEl, this.centerX, this.centerY, z, this.maxIter, this.colorChoice, this.colorMax, {lowRes: this.animating});
           if (! this.animating) {
             this.updateURL();    
           }                
