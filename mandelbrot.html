@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Mandelbrot Explorer</title>
+    <title>Mandelbrot 1e300</title>
     <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^300 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
     <style>
       html, body {
@@ -65,8 +65,9 @@
         gap: 10px;
         justify-content: center;
       }
-      .controlButton {
-        min-width: 100px;
+      .controlButton, select {
+        min-width: 120px;
+        max-width: 120px;
         padding: 10px;
         font-size: 16px;
         color: rgba(255,255,255,0.7);
@@ -85,6 +86,9 @@
       }
       .controlButton:focus {
         outline: none;
+      }
+      select {
+        padding: 0 0 0 20px;
       }
       .tipOverlay {
         position: absolute;
@@ -106,7 +110,7 @@
   <body>
     <div id="app"></div>
     <script type="module">
-      import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
+      import { App, Component, div, h1, button, selector, canvas } from "https://esm.sh/solenya";
       import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
 
       function debounce(fn, ms) {
@@ -264,7 +268,6 @@
         maxIter = this.maxIterDefault;
         colorMax = 1200;
         colorChoice = 24.2;
-        zoomAnimationsEnabled = true;
         animating = false;
         rendering = false;
         zoomOutFactor = 2;
@@ -280,6 +283,8 @@
 
         get zActual () { return this.z.times(this.pleasantCanvasRatio); }
         set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }
+
+        get zoomAnimationsEnabled () { return this.maxIter <= 5000 }
 
         busy () {
           return this.animating || this.rendering;
@@ -315,7 +320,6 @@
             this.centerY = getNumericParam("y", d => new Decimal(d), this.defaultCenterY);
             this.z = this.prevZ = getNumericParam("z", d => new Decimal(d), this.defaultZ);
             this.maxIter = getNumericParam("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
-            this.zoomAnimationsEnabled = this.z.e < 20;
           })
         }
 
@@ -344,17 +348,11 @@
           }
         }
 
-        toggleAnimation() {
-          if (this.busy()) return;
-          this.update(() => {
-            this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
-            this.zoomStack = []
-          });
-        }
-
-        dynamicMaxIter() {
-          const iter = 1000 + (150 * Math.max(0, this.z.e));
-          return Number(iter.toPrecision(2));
+        updated(payload) {
+          if (payload.key == "maxIter") {
+            this.renderFractal();
+          }    
+          document.getElementById("maxIter").value = this.maxIter; // hack for weird databinding issue.
         }
 
         async renderFractal() {
@@ -362,10 +360,6 @@
           const zoomingOut = this.prevZ.greaterThan(this.z)
 
           if (!this.animating) {
-            const idealMaxIter = this.dynamicMaxIter()
-            if ((zoomingIn && this.maxIter < idealMaxIter) || (zoomingOut && this.maxIter > idealMaxIter)) { // allows custom maxIter to override ideal
-              this.maxIter = idealMaxIter
-            }
             Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum
             this.prevZ = this.z
           }
@@ -485,15 +479,16 @@
           }
         }
 
-        reset() {
-          this.animating = this.rendering = false;
+        reset() {       
+          if (this.busy())
+            return;
+
           this.update(() => {
             this.zoomStack = [];
             this.z = this.prevZ = this.defaultZ;
             this.centerX = this.defaultCenterX;
             this.centerY = this.defaultCenterY;
             this.maxIter = this.maxIterDefault;
-            this.zoomAnimationsEnabled = true;
           })
           setTimeout(() => this.renderFractal(), 1);
         }
@@ -510,6 +505,13 @@
           document.body.removeChild(link);
         }
 
+        iterationOptions = [
+          { label: "1K Anim.", value: 1000 },
+          { label: "5K Anim.", value: 5000 },
+          { label: "20K Still", value: 20000 },
+          { label: "80K Still", value: 80000 },
+        ]
+
         view() {
           return div(
             canvas({
@@ -521,16 +523,16 @@
             this.marquee.view({ id: "marqueeCanvas", width: this.canvasWidth, height: this.canvasHeight }),
             this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
             div({ class: "infoBox" },
-              h1({ class: "title" }, "Mandelbrot Explorer"),
-              div({ class: "controls" },
+              h1({ class: "title" }, "Mandelbrot 1e300"),
+              div({ class: "controls" },                
                 button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
-                button({ class: "controlButton", onclick: () => this.toggleAnimation() }, this.zoomAnimationsEnabled ? "Animated" : "Still"),
+                selector({target: this, prop : () => this.maxIter, options: this.iterationOptions, id: "maxIter" }),
                 button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
                 button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out")
               )
             )
           );
-        }
+        }        
       }
 
       /*
