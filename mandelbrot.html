@@ -536,7 +536,7 @@
        * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
        *     
        * - Calculates in low resolution before high resolution, enabling:
-       *   - Creating a maak to skip unnecessary calculations
+       *   - Creating a mask to skip unnecessary calculations
        *   - Animations with reduced resolution
        * - Works with fractional zoom levels, not only integer powers of two
        * - Works with any aspect ratio, automatically filling the available space
@@ -546,12 +546,23 @@
 
       import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
       import { init } from "https://cdn.skypack.dev/gmp-wasm";
-      
-      async function createMandelbrotRenderer() {
+
+      async function createMandelbrotRenderer()
+      {
         const { binding } = await init(); // Loads the MPFR binding
 
+        /* ------------------ Global OffscreenCanvas Cache ------------------ */
         const offscreenCanvasCache = new Map();
 
+        /**
+         * Returns a cached OffscreenCanvas identified by 'key'.
+         * If a canvas doesn't exist or its dimensions differ, a new one is created.
+         * 
+         * @param {string} key - The identifier for the cached canvas.
+         * @param {number} width - The desired width.
+         * @param {number} height - The desired height.
+         * @returns {OffscreenCanvas}
+         */
         function getOrCreateOffscreenCanvasByKey(key, width, height) {
           width = Number(width);
           height = Number(height);
@@ -603,7 +614,6 @@
 
         function ensureSize(canvas) {
           const { gl } = webglResources;
-          
           // For both HTMLCanvasElement and OffscreenCanvas, use width and height properties.
           canvas.width = canvas.clientWidth || canvas.width;
           canvas.height = canvas.clientHeight || canvas.height;
@@ -617,7 +627,6 @@
 
         /* ------------------ Async Helper ------------------ */
 
-        // runLast ensures only the latest call executes
         const runLast = (() => {
           let runLock = false;
           let pendingRun = null;
@@ -703,7 +712,6 @@
             throw new Error("Error compiling shader: " + gl.getShaderInfoLog(shader));
           return shader;
         }
-
         function initShaderProgram(gl, vsSource, fsSource) {
           const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
           const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
@@ -715,7 +723,6 @@
             throw new Error("Unable to initialize shader program: " + gl.getProgramInfoLog(shaderProgram));
           return shaderProgram;
         }
-
         function createAndSetupTexture(gl, unit, width, height, internalFormat, format, type, data = null) {
           const tex = gl.createTexture();
           gl.activeTexture(gl.TEXTURE0 + unit);
@@ -726,7 +733,6 @@
           gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
           return tex;
         }
-
         function createFramebufferForTexture(gl, tex) {
           const fbo = gl.createFramebuffer();
           gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
@@ -734,7 +740,6 @@
           if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
             throw new Error("Framebuffer not complete.");
           return fbo;
-
         }
         function drawPass(gl, framebuffer, width, height, setUniforms) {
           gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -749,125 +754,125 @@
 
         /* ------------------ Shader Sources ------------------ */
         const vsSource = `#version 300 es
-          in vec4 aVertexPosition;
-          uniform mat4 uModelViewMatrix;
-          uniform mat4 uProjectionMatrix;
-          out highp vec2 delta;
-          void main() {
-            gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-            delta = vec2(aVertexPosition[0], aVertexPosition[1]);
-          }
+        in vec4 aVertexPosition;
+        uniform mat4 uModelViewMatrix;
+        uniform mat4 uProjectionMatrix;
+        out highp vec2 delta;
+        void main() {
+          gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+          delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+        }
         `;
-
         const fsSource = `#version 300 es
-          precision highp float;
-          in highp vec2 delta;
-          out vec4 fragColor;
-          uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
-          uniform float uColorMax;     // Fixed iteration count for colouring.
-          uniform bool uUseHeuristic;
-          uniform sampler2D uLowResMask;
-          uniform vec2 uLowResDim;
-          uniform vec2 uFinalDim;
-          uniform vec4 poly1;
-          uniform vec4 poly2;
-          uniform sampler2D sequence;
-          float get_orbit_x(int i) {
-            i = i * 3;
-            int row = i / 1024;
-            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-          }
-          float get_orbit_y(int i) {
-            i = i * 3 + 1;
-            int row = i / 1024;
-            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-          }
-          float get_orbit_scale(int i) {
-            i = i * 3 + 2;
-            int row = i / 1024;
-            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-          }
-          void main() {
-            if (uUseHeuristic) {
-              vec2 uv = gl_FragCoord.xy / uFinalDim;
-              if (texture(uLowResMask, uv).r > 0.5) {
-                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-                return;
-              }
+        precision highp float;
+        in highp vec2 delta;
+        out vec4 fragColor;
+        uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
+        uniform float uColorMax;     // Fixed iteration count for colouring.
+        uniform bool uUseHeuristic;
+        uniform sampler2D uLowResMask;
+        uniform vec2 uLowResDim;
+        uniform vec2 uFinalDim;
+        uniform vec4 poly1;
+        uniform vec4 poly2;
+        uniform sampler2D sequence;
+        float get_orbit_x(int i) {
+          i = i * 3;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        float get_orbit_y(int i) {
+          i = i * 3 + 1;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        float get_orbit_scale(int i) {
+          i = i * 3 + 2;
+          int row = i / 1024;
+          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+        }
+        void main() {
+          if (uUseHeuristic) {
+            vec2 uv = gl_FragCoord.xy / uFinalDim;
+            if (texture(uLowResMask, uv).r > 0.5) {
+              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+              return;
             }
-            float q = uState[2] - 1.0;
-            float cq = q;
-            q = q + poly2[3];
-            float S = pow(2.0, q);
-            float dcx = delta[0];
-            float dcy = delta[1];
-            float x;
-            float y;
-            float sqrx = (dcx * dcx - dcy * dcy);
-            float sqry = (2.0 * dcx * dcy);
-            float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;
-            float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
-            int k = int(poly2[2]);
-            int j = k;
+          }
+          float q = uState[2] - 1.0;
+          float cq = q;
+          q = q + poly2[3];
+          float S = pow(2.0, q);
+          float dcx = delta[0];
+          float dcy = delta[1];
+          float x;
+          float y;
+          float sqrx = (dcx * dcx - dcy * dcy);
+          float sqry = (2.0 * dcx * dcy);
+          float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;      
+          float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
+          int k = int(poly2[2]);
+          int j = k;
+          x = get_orbit_x(k);
+          y = get_orbit_y(k);
+          for (int i = k; float(i) < uState[3]; i++) {
+            j++; k++;
+            float os = get_orbit_scale(k - 1);
+            dcx = delta[0] * pow(2.0, -q + cq - os);
+            dcy = delta[1] * pow(2.0, -q + cq - os);
+            float unS = pow(2.0, q - os);
+            if (isinf(unS)) unS = 0.0;
+            float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
+            dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
+            dx = tx;
+            q = q + os;
+            S = pow(2.0, q);
             x = get_orbit_x(k);
             y = get_orbit_y(k);
-            for (int i = k; float(i) < uState[3]; i++) {
-              j++; k++;
-              float os = get_orbit_scale(k - 1);
-              dcx = delta[0] * pow(2.0, -q + cq - os);
-              dcy = delta[1] * pow(2.0, -q + cq - os);
-              float unS = pow(2.0, q - os);
-              if (isinf(unS)) unS = 0.0;
-              float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
-              dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
-              dx = tx;
-              q = q + os;
+            float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
+            float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
+            if (fx * fx + fy * fy > 4.0) break;
+            if (dx * dx + dy * dy > 1000000.0) {
+              dx /= 2.0;
+              dy /= 2.0;
+              q = q + 1.0;
               S = pow(2.0, q);
-              x = get_orbit_x(k);
-              y = get_orbit_y(k);
-              float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
-              float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
-              if (fx * fx + fy * fy > 4.0) break;
-              if (dx * dx + dy * dy > 1000000.0) {
-                dx /= 2.0;
-                dy /= 2.0;
-                q = q + 1.0;
-                S = pow(2.0, q);
-                dcx = delta[0] * pow(2.0, -q + cq);
-                dcy = delta[1] * pow(2.0, -q + cq);
-              }
-              if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
-                dx = fx;
-                dy = fy;
-                q = 0.0;
-                S = pow(2.0, q);
-                dcx = delta[0] * pow(2.0, -q + cq);
-                dcy = delta[1] * pow(2.0, -q + cq);
-                k = 0;
-                x = get_orbit_x(0);
-                y = get_orbit_y(0);
-              }
+              dcx = delta[0] * pow(2.0, -q + cq);
+              dcy = delta[1] * pow(2.0, -q + cq);
             }
-            float c_old = (uState[3] - float(j)) / uState[1];
-            vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
-            if (length(col_old) < 0.001) {
-              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            } else {
-              float c_new = (uColorMax - float(j)) / uState[1];
-              vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
-              fragColor = vec4(col_new, 1.0);
+            if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
+              dx = fx;
+              dy = fy;
+              q = 0.0;
+              S = pow(2.0, q);
+              dcx = delta[0] * pow(2.0, -q + cq);
+              dcy = delta[1] * pow(2.0, -q + cq);
+              k = 0;
+              x = get_orbit_x(0);
+              y = get_orbit_y(0);
             }
           }
+          float c_old = (uState[3] - float(j)) / uState[1];
+          vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
+          if (length(col_old) < 0.001) {
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+          } else {
+            float c_new = (uColorMax - float(j)) / uState[1];
+            vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
+            fragColor = vec4(col_new, 1.0);
+          }
+        }
         `;
 
         /* ------------------ Layout and Buffer Helpers ------------------ */
         function computeLayoutAndMatrices(canvas) {
+          // Use canvas.width and canvas.height (OffscreenCanvas does not have clientWidth)
           const width = canvas.width;
           const height = canvas.height;
           const aspect = width / height;
           const layout = aspect >= 1 ?
             [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
-            [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0, -1.0, -1.0 / aspect];
+            [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
           const projectionMatrix = mat4.create();
           if (aspect >= 1)
             mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
@@ -886,11 +891,11 @@
         }
 
         /*
-         * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
-         * Run with lower resolution than final image, to create mask applied to final image
-         */
-        function createMask(gl, programInfo, resWidth, resHeight)
-        {
+        * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
+        * Run with lower resolution than final image, to create mask applied to final image
+        */
+        function createMask(gl, programInfo, resWidth, resHeight) {
+          // Use a dedicated cache key for the mask canvas.
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
           const offscreenContext = offscreenCanvas.getContext("2d");
           const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
@@ -912,19 +917,14 @@
           for (let y = 1; y < resHeight - 1; y++) {
             for (let x = 1; x < resWidth - 1; x++) {
               let allBlack = true;
-              // only mask a pixel if it and all of its neighbours are black.
-              // this means a black pixel near an edge of colour still gets computed
-              // because maybe in high resolution it will be coloured
-              // only entirely black regions are part of mask
-              for (let j = -1; j <= 1 && allBlack; j++) {
+              // Only mask a pixel if it and all of its neighbours are black.
+              for (let j = -1; j <= 1 && allBlack; j++) { 
                 for (let i = -1; i <= 1; i++) {
                   const idx = 4 * ((y + j) * resWidth + (x + i));
-                  if (
-                    !(pixelBuffer[idx] === 0 &&
+                  if (!(pixelBuffer[idx] === 0 &&
                       pixelBuffer[idx + 1] === 0 &&
                       pixelBuffer[idx + 2] === 0 &&
-                      pixelBuffer[idx + 3] === 255)
-                  ) {
+                      pixelBuffer[idx + 3] === 255)) {
                     allBlack = false;
                     break;
                   }
@@ -998,7 +998,8 @@
         }
 
         /* ------------------ Rendering Passes ------------------ */
-        function renderLowRes(gl, programInfo, canvas, scaleFactor) {          
+        function renderLowRes(gl, programInfo, canvas, scaleFactor) {
+          // Use canvas.width/height for OffscreenCanvas.
           const lowWidth = Math.floor(canvas.width / scaleFactor);
           const lowHeight = Math.floor(canvas.height / scaleFactor);
           const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
@@ -1028,7 +1029,11 @@
           gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
           gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
           gl.viewport(0, 0, canvas.width, canvas.height);
-          gl.blitFramebuffer(0, 0, finalWidth, finalHeight, 0, 0, canvas.width, canvas.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+          gl.blitFramebuffer(
+            0, 0, finalWidth, finalHeight,
+            0, 0, canvas.width, canvas.height,
+            gl.COLOR_BUFFER_BIT, gl.NEAREST
+          );
           gl.bindFramebuffer(gl.FRAMEBUFFER, null);
           gl.deleteFramebuffer(finalFbo);
           gl.deleteTexture(finalTex);
@@ -1036,32 +1041,31 @@
         }
 
         /**
-        * Renders the Mandelbrot set on the provided canvas.
-        *
-        * @param {HTMLCanvasElement} canvas - The canvas element where the Mandelbrot set will be drawn.
-        * @param {string} x - The x-coordinate of the Mandelbrot center.
-        * @param {string} y - The y-coordinate of the Mandelbrot center.
-        * @param {string} r - The radius/zoom magnification for the Mandelbrot set calculation.
-        * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
-        * @param {number} cmapscale - The scale factor applied to the color map for shading.
-        * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
-        * @param {Object} [options={}] - Optional parameters for rendering.
-        * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
-        * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
-        *
-        * @returns {void}
-        */
+         * Renders the Mandelbrot set on the provided main canvas.
+         *
+         * @param {HTMLCanvasElement} mainCanvas - The visible canvas element.
+         * @param {Decimal} x - The x-coordinate of the Mandelbrot center (must be a Decimal instance).
+         * @param {Decimal} y - The y-coordinate of the Mandelbrot center (must be a Decimal instance).
+         * @param {Decimal} r - The radius/zoom magnification for the Mandelbrot set calculation (must be a Decimal instance).
+         * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
+         * @param {number} cmapscale - The scale factor applied to the color map for shading.
+         * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
+         * @param {Object} [options={}] - Optional parameters for rendering.
+         * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
+         * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
+         *
+         * @returns {void}
+         */
         function render(mainCanvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {
+          // Directly call the generalized cache function for the main render OffscreenCanvas.
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey(
             'mainRender',
             mainCanvas.clientWidth || mainCanvas.width,
             mainCanvas.clientHeight || mainCanvas.height
           );
-          
           // Fetch (or create) WebGL resources on the offscreen canvas.
           const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
 
-          // Set up the Mandelbrot state.
           const mandelbrot_state = {
             center: [mpfr_zero(), mpfr_zero()],
             radius: mpfr_zero(),
@@ -1076,7 +1080,6 @@
           };
           mandelbrot_state.set(x, y, r);
 
-          // Compute layout matrices and set up buffers.
           const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(offscreenCanvas);
           gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
           gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
@@ -1084,12 +1087,8 @@
           gl.useProgram(programInfo.program);
           gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
           gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
-
-          // Create the reference orbit and set up texture.
           const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
           createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
-
-          // Set uniform state values.
           const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
           const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
           gl.uniform4f(
@@ -1099,11 +1098,10 @@
             1 + get_exp(mandelbrot_state.radius),
             mandelbrot_state.iterations
           );
-          if (mandelbrot_state.colorMax !== undefined) {
+          if (mandelbrot_state.colorMax !== undefined)
             gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
-          }
 
-          // Compute and update polynomial scaling.
+          // Compute and update polynomial scaling here (if needed).
           const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
           const poly_scale = [1, -poly_scale_exp[1]];
           const poly_scaled = [
@@ -1129,13 +1127,12 @@
             poly_scale_exp[1]
           );
 
-          // Render either low or high resolution based on options.
           if (!options.lowRes)
             renderLowRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
           else
             renderHighRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
 
-          // Transfer the rendered image from the offscreen canvas to the main canvas.
+          // After rendering to the offscreen canvas, transfer the result to the main canvas.
           const bitmap = offscreenCanvas.transferToImageBitmap();
           const mainCtx = mainCanvas.getContext("2d");
           mainCtx.drawImage(bitmap, 0, 0, mainCanvas.clientWidth || mainCanvas.width, mainCanvas.clientHeight || mainCanvas.height);
