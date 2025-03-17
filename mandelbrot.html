@@ -951,11 +951,11 @@
         }
 
         /*
-        * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
-        * Run with lower resolution than final image, to create mask applied to final image
+        * createMask solves the issue of wasting time computing large areas of black pixels.
+        * It creates a lower resolution mask comprised of black pixels completely surrounded by
+        * other black pixels, to avoid recomputing those black pixels in the higher resolution image. 
         */
         function createMask(gl, programInfo, resWidth, resHeight) {
-          // Use a dedicated cache key for the mask canvas.
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
           const offscreenContext = offscreenCanvas.getContext("2d");
           const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
@@ -965,7 +965,7 @@
             gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
           });
 
-          // Copy WebGL image to a local image; reading pixels is slow so we use the offscreen canvas.
+          // Copy WebGL image to a local image; reading individual pixels across JS/WebGL2 boundary is extremely slow so we copy all pixels to an offscreen canvas.
           const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
           gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
           gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
@@ -1001,8 +1001,7 @@
         }
 
         /* ------------------ Rendering Passes ------------------ */
-        function renderLowRes(gl, programInfo, canvas, scaleFactor)
-        {
+        function renderLowRes(gl, programInfo, canvas, scaleFactor) {
           const lowWidth = Math.floor(canvas.width / scaleFactor);
           const lowHeight = Math.floor(canvas.height / scaleFactor);
           const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
@@ -1044,13 +1043,13 @@
         }
 
         /**
-         * Returns a Mandelbrot set as an ImageBitmap.
+         * Returns a Mandelbrot set as a bitmp.
          *
-         * @param {width} width - Pixel width.
-         * @param {height} width - Pixel height.
-         * @param {string} x - The x-coordinate of the Mandelbrot center.
-         * @param {string} y - The y-coordinate of the Mandelbrot center.
-         * @param {string} r - The radius/zoom magnification for the Mandelbrot set calculation.
+         * @param {number} width - Pixel width.
+         * @param {number} height - Pixel height.
+         * @param {string} x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
+         * @param {string} y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
+         * @param {string} r - The arbitrary precision radius/zoom magnification for the Mandelbrot set calculation.
          * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
          * @param {number} cmapscale - The scale factor applied to the color map for shading.
          * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
@@ -1111,20 +1110,9 @@
             mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
             mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
           ].map(floaty);
-          gl.uniform4f(
-            programInfo.uniformLocations.poly1,
-            poly_scaled[0],
-            poly_scaled[1],
-            poly_scaled[2],
-            poly_scaled[3]
-          );
-          gl.uniform4f(
-            programInfo.uniformLocations.poly2,
-            poly_scaled[4],
-            poly_scaled[5],
-            polylim,
-            poly_scale_exp[1]
-          );
+
+          gl.uniform4f (programInfo.uniformLocations.poly1, poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]);
+          gl.uniform4f(programInfo.uniformLocations.poly2, poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]);
 
           if (!options.lowRes)
             renderLowRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
