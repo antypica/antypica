@@ -555,15 +555,6 @@
         /* ------------------ Global OffscreenCanvas Cache ------------------ */
         const offscreenCanvasCache = new Map();
 
-        /**
-         * Returns a cached OffscreenCanvas identified by 'key'.
-         * If a canvas doesn't exist or its dimensions differ, a new one is created.
-         * 
-         * @param {string} key - The identifier for the cached canvas.
-         * @param {number} width - The desired width.
-         * @param {number} height - The desired height.
-         * @returns {OffscreenCanvas}
-         */
         function getOrCreateOffscreenCanvasByKey(key, width, height) {
           width = Number(width);
           height = Number(height);
@@ -623,8 +614,9 @@
           gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
         }
 
-        /* ------------------ Async Helper ------------------ */
+        /* ------------------ Async Helpers ------------------ */
 
+        /* Returns an async wrapper that replaces any queued call with the latest invocation. */
         const takeLatest = (() => {
           let running = false;
           let pending = null;
