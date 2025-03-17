@@ -948,7 +948,7 @@
         /*
         * createMask solves the issue of wasting time computing large areas of black pixels.
         * It creates a lower resolution mask comprised of black pixels completely surrounded by
-        * other black pixels, to avoid recomputing those black pixels in the higher resolution image. 
+        * other black pixels, to avoid recomputing those black pixels in the higher resolution image.
         */
         function createMask(gl, programInfo, resWidth, resHeight) {
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
@@ -960,7 +960,7 @@
             gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
           });
 
-          // Copy WebGL image to a local image; reading individual pixels across JS/WebGL2 boundary is extremely slow so we copy all pixels to an offscreen canvas.
+          // Copy WebGL image to a local image.
           const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
           gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
           gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
@@ -973,13 +973,13 @@
             for (let x = 1; x < resWidth - 1; x++) {
               let allBlack = true;
               // Only mask a pixel if it and all of its neighbours are black.
-              for (let j = -1; j <= 1 && allBlack; j++) { 
+              for (let j = -1; j <= 1 && allBlack; j++) {
                 for (let i = -1; i <= 1; i++) {
                   const idx = 4 * ((y + j) * resWidth + (x + i));
                   if (!(pixelBuffer[idx] === 0 &&
-                      pixelBuffer[idx + 1] === 0 &&
-                      pixelBuffer[idx + 2] === 0 &&
-                      pixelBuffer[idx + 3] === 255)) {
+                        pixelBuffer[idx + 1] === 0 &&
+                        pixelBuffer[idx + 2] === 0 &&
+                        pixelBuffer[idx + 3] === 255)) {
                     allBlack = false;
                     break;
                   }
@@ -994,49 +994,7 @@
 
           return { mask, width: resWidth, height: resHeight };
         }
-
-        /* ------------------ Rendering Passes ------------------ */
-        function renderLowRes(gl, programInfo, canvas, scaleFactor) {
-          const lowWidth = Math.floor(canvas.width / scaleFactor);
-          const lowHeight = Math.floor(canvas.height / scaleFactor);
-          const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
-          const maskTex = createAndSetupTexture(gl, 2, lowWidth, lowHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-          drawPass(gl, null, canvas.width, canvas.height, () => {
-            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
-            gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-            gl.uniform2f(programInfo.uniformLocations.uLowResDim, lowWidth, lowHeight);
-            gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.width, canvas.height);
-          });
-          gl.deleteTexture(maskTex);
-        }
-
-        function renderHighRes(gl, programInfo, canvas, scaleFactor) {
-          const finalWidth = Math.floor(canvas.width / scaleFactor);
-          const finalHeight = Math.floor(canvas.height / scaleFactor);
-          const maskRes = Math.floor(finalWidth / scaleFactor);
-          const { mask, width: mWidth, height: mHeight } = createMask(gl, programInfo, maskRes, Math.floor(finalHeight / scaleFactor));
-          const maskTex = createAndSetupTexture(gl, 2, mWidth, mHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-          const finalTex = createAndSetupTexture(gl, 4, finalWidth, finalHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-          const finalFbo = createFramebufferForTexture(gl, finalTex);
-          drawPass(gl, finalFbo, finalWidth, finalHeight, () => {
-            gl.uniform2f(programInfo.uniformLocations.uFinalDim, finalWidth, finalHeight);
-            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
-            gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-          });
-          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
-          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-          gl.viewport(0, 0, canvas.width, canvas.height);
-          gl.blitFramebuffer(
-            0, 0, finalWidth, finalHeight,
-            0, 0, canvas.width, canvas.height,
-            gl.COLOR_BUFFER_BIT, gl.NEAREST
-          );
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          gl.deleteFramebuffer(finalFbo);
-          gl.deleteTexture(finalTex);
-          gl.deleteTexture(maskTex);
-        }
-
+        
         /**
          * Returns a Mandelbrot set as a bitmp.
          *
@@ -1054,9 +1012,50 @@
          *
          * @returns {ImageBitmap}
          */
-        function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {})
-        {          
-          const offscreenCanvas = getOrCreateOffscreenCanvasByKey ('mainRender', width, height);          
+        function renderScaled(gl, programInfo, canvas, scaleFactor, isAnimation) {          
+          const targetWidth = Math.floor(canvas.width / scaleFactor);
+          const targetHeight = Math.floor(canvas.height / scaleFactor);          
+          const maskWidth = Math.floor(targetWidth / scaleFactor);
+          const maskHeight = Math.floor(targetHeight / scaleFactor);
+
+          // Generate mask and set up the corresponding texture.
+          const { mask } = createMask(gl, programInfo, maskWidth, maskHeight);
+          const maskTex = createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+
+          if (isAnimation) {
+            // Animation pass: draw directly to the canvas.
+            drawPass(gl, null, canvas.width, canvas.height, () => {
+              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+              gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+              gl.uniform2f(programInfo.uniformLocations.uLowResDim, targetWidth, targetHeight);
+              gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.width, canvas.height);
+            });
+          } else {
+            // Final high-res pass: draw into an offscreen framebuffer then blit to canvas.
+            const finalTex = createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+            const finalFbo = createFramebufferForTexture(gl, finalTex);
+            drawPass(gl, finalFbo, targetWidth, targetHeight, () => {
+              gl.uniform2f(programInfo.uniformLocations.uFinalDim, targetWidth, targetHeight);
+              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+              gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+            });
+            gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
+            gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.blitFramebuffer(
+              0, 0, targetWidth, targetHeight,
+              0, 0, canvas.width, canvas.height,
+              gl.COLOR_BUFFER_BIT, gl.NEAREST
+            );
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.deleteFramebuffer(finalFbo);
+            gl.deleteTexture(finalTex);
+          }
+          gl.deleteTexture(maskTex);
+        }
+
+        function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('mainRender', width, height);
           const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
 
           const mandelbrot_state = {
@@ -1106,15 +1105,12 @@
             mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
           ].map(floaty);
 
-          gl.uniform4f (programInfo.uniformLocations.poly1, poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]);
+          gl.uniform4f(programInfo.uniformLocations.poly1, poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]);
           gl.uniform4f(programInfo.uniformLocations.poly2, poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]);
 
-          if (!options.lowRes)
-            renderLowRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
-          else
-            renderHighRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
+          renderScaled(gl, programInfo, offscreenCanvas, options.scaleFactor || 3, !options.lowRes);
 
-          return offscreenCanvas.transferToImageBitmap();          
+          return offscreenCanvas.transferToImageBitmap();
         }
 
         return (...args) => takeLatest(render, ...args);
