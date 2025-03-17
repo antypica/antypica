@@ -1,1062 +1,1150 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="UTF-8" />  
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Mandelbrot Explorer</title>
-  <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^300 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      overflow: hidden;
-      font-family: "Helvetica Neue", Arial, sans-serif;
-    }
-    #app {
-      position: relative;
-      width: 100vw;
-      height: 100dvh;
-      background: black;
-    }
-    canvas {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      user-select: none;
-    }
-    #mainCanvas { 
-      z-index: 1; 
-      cursor: crosshair;
-    }    
-    #marqueeCanvas { 
-      z-index: 2; 
-      cursor: crosshair;
-    }
-    .infoBox {
-      position: fixed;
-      bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
-      right: 20px;
-      padding: 10px;
-      border-radius: 4px;
-      z-index: 1000;
-    }
-    @media (max-width: 768px) {
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Mandelbrot Explorer</title>
+    <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^300 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+      }
+      #app {
+        position: relative;
+        width: 100vw;
+        height: 100dvh;
+        background: black;
+      }
+      canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        user-select: none;
+      }
+      #mainCanvas {
+        z-index: 1;
+        cursor: crosshair;
+      }
+      #marqueeCanvas {
+        z-index: 2;
+        cursor: crosshair;
+      }
       .infoBox {
-        right: auto;
-        left: 50%;
-        transform: translateX(-50%);
+        position: fixed;
         bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
+        right: 20px;
+        padding: 10px;
+        border-radius: 4px;
+        z-index: 1000;
       }
-    }
-    .infoBox .title {
-      font-size: 1.35rem;
-      color: #fff;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
-      margin: 0 0 10px;
-      text-align: center;
-      white-space: nowrap;
-    }
-    .controls {
-      display: grid;
-      grid-template-columns: auto auto;
-      gap: 10px;
-      justify-content: center;
-    }
-    .controlButton {
-      min-width: 100px;
-      padding: 10px;
-      font-size: 16px;
-      color: rgba(255,255,255,0.7);
-      background: rgba(70,70,70,0.4);
-      border: 2px solid rgba(255,255,255,0.7);
-      border-radius: 4px;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background 0.2s, color 0.2s;
-    }
-    .controlButton:hover,
-    .controlButton:active {
-      color: rgba(255,255,255,1);
-      border-color: rgba(255,255,255,1);
-      background: rgba(70,70,70,0.8);
-    }
-    .controlButton:focus {
-      outline: none;
-    }
-    .tipOverlay {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      font-size: 1rem;
-      color: #fff;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
-      pointer-events: none;
-      z-index: 900;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 8px 12px;
-      border-radius: 4px;    
-      transition: opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
-    }
-  </style>
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module">    
-    import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";    
-    import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
-    import { init } from "https://cdn.skypack.dev/gmp-wasm";
-    import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
-
-    // algorithm adapted from Hastings Greer          
-    async function createMandelbrotRenderer() {
-      const { binding } = await init(); // Loads the MPFR binding
-
-      /* ------------------ WebGL Resource Initialization and Caching ------------------ */
-      let webglResources = null;
-
-      function fetchWebGLResources(canvas) {
-        if (webglResources) {
-          ensureSize();
-          return webglResources;
+      @media (max-width: 768px) {
+        .infoBox {
+          right: auto;
+          left: 50%;
+          transform: translateX(-50%);
+          bottom: calc(env(safe-area-inset-bottom, 0) + 20px);
         }
+      }
+      .infoBox .title {
+        font-size: 1.35rem;
+        color: #fff;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+        margin: 0 0 10px;
+        text-align: center;
+        white-space: nowrap;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: auto auto;
+        gap: 10px;
+        justify-content: center;
+      }
+      .controlButton {
+        min-width: 100px;
+        padding: 10px;
+        font-size: 16px;
+        color: rgba(255,255,255,0.7);
+        background: rgba(70,70,70,0.4);
+        border: 2px solid rgba(255,255,255,0.7);
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.2s, color 0.2s;
+      }
+      .controlButton:hover,
+      .controlButton:active {
+        color: rgba(255,255,255,1);
+        border-color: rgba(255,255,255,1);
+        background: rgba(70,70,70,0.8);
+      }
+      .controlButton:focus {
+        outline: none;
+      }
+      .tipOverlay {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 1rem;
+        color: #fff;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+        pointer-events: none;
+        z-index: 900;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 8px 12px;
+        border-radius: 4px;
+        transition: opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { App, Component, div, h1, button, canvas } from "https://esm.sh/solenya";
+      import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
 
-        const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
-        if (!gl) throw new Error("WebGL2 not supported.");
-        const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
-        const programInfo = {
-          program: shaderProgram,
-          attribLocations: {
-            vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
-          },
-          uniformLocations: {
-            projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
-            modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
-            uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
-            uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
-            uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
-            uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
-            state: gl.getUniformLocation(shaderProgram, "uState"),
-            colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
-            poly1: gl.getUniformLocation(shaderProgram, "poly1"),
-            poly2: gl.getUniformLocation(shaderProgram, "poly2"),
-            sequence: gl.getUniformLocation(shaderProgram, "sequence")
-          }
+      function debounce(fn, ms) {
+        let t;
+        return function (...args) {
+          clearTimeout(t);
+          t = setTimeout(() => fn.apply(this, args), ms);
         };
-        const buffers = initBuffers(gl, canvas);
-        webglResources = { gl, programInfo, buffers, canvas };
-        return webglResources;
       }
 
-      function ensureSize() {
-        const { gl, canvas } = webglResources;
-        canvas.width = canvas.clientWidth;
-        canvas.height = canvas.clientHeight;
-        gl.viewport(0, 0, canvas.width, canvas.height);
-        const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
-        webglResources.buffers = initBuffers(gl, canvas);
-        gl.useProgram(webglResources.programInfo.program);
-        gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
-        gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+      const getNumericParam = (key, parser, defaultValue, min, max) => {
+        const params = new URLSearchParams(window.location.search);
+        const str = params.get(key);
+        if (str === null) return defaultValue;
+        try {
+          let val = parser(str);
+          return (typeof val === "number" ? isNaN(val) : val?.isNaN?.()) ? defaultValue
+            : (min !== undefined && val < min ? min : (max !== undefined && val > max ? max : val));
+        } catch (e) {
+          return defaultValue;
+        }
+      };
+
+      function clearCanvas(canvasEl) {
+        canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
       }
 
-      /* ------------------ Arithmetic Helpers ------------------ */
-      function mpfr_zero() {
-        const zero = binding.mpfr_t();
-        binding.mpfr_init2(zero, 1200);
-        binding.mpfr_set_d(zero, 0, 0);
-        return zero;
-      }
-      function get_exp(val) {
-        const tmp = mpfr_zero();
-        binding.mpfr_log2(tmp, val, 0);
-        return binding.mpfr_get_d(tmp, 0);
-      }
-      function alignExponents(a, b) {
-        let [am, ae] = a, [bm, be] = b;
-        const retE = Math.max(ae, be);
-        if (retE > ae) am *= Math.pow(2, ae - retE);
-        else bm *= Math.pow(2, be - retE);
-        return [am, bm, retE];
-      }
-      function sub(a, b) {
-        let [am, bm, e] = alignExponents(a, b);
-        return [am - bm, e];
-      }
-      function add(a, b) {
-        let [am, bm, e] = alignExponents(a, b);
-        return [am + bm, e];
-      }
-      function mul(a, b) {
-        let [am, ae] = a, [bm, be] = b;
-        let m = am * bm, e = ae + be;
-        if (m !== 0) {
-          const logm = Math.round(Math.log2(Math.abs(m)));
-          m = m / Math.pow(2, logm);
-          e += logm;
-        }
-        return [m, e];
-      }
-      function maxabs(a, b) {
-        let [am, bm, e] = alignExponents(a, b);
-        return [Math.max(Math.abs(am), Math.abs(bm)), e];
-      }
-      function gt(a, b) {
-        let [am] = alignExponents(a, b);
-        let [, bm] = alignExponents(a, b);
-        return am > bm;
-      }
-      function floaty(d) {
-        return Math.pow(2, d[1]) * d[0];
-      }
+      class Tip extends Component {
+        element = undefined;
+        tipState = "not_shown";
 
-      /* ------------------ WebGL Helpers ------------------ */
-      function loadShader(gl, type, source) {
-        const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
-        gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
-          throw new Error("Error compiling shader: " + gl.getShaderInfoLog(shader));
-        return shader;
-      }
-      function initShaderProgram(gl, vsSource, fsSource) {
-        const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
-        const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
-        const shaderProgram = gl.createProgram();
-        gl.attachShader(shaderProgram, vertexShader);
-        gl.attachShader(shaderProgram, fragmentShader);
-        gl.linkProgram(shaderProgram);
-        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
-          throw new Error("Unable to initialize shader program: " + gl.getProgramInfoLog(shaderProgram));
-        return shaderProgram;
-      }
-      function createAndSetupTexture(gl, unit, width, height, internalFormat, format, type, data = null) {
-        const tex = gl.createTexture();
-        gl.activeTexture(gl.TEXTURE0 + unit);
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
-        return tex;
-      }
-      function createFramebufferForTexture(gl, tex) {
-        const fbo = gl.createFramebuffer();
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
-          throw new Error("Framebuffer not complete.");
-        return fbo;
-      }
-      function drawPass(gl, framebuffer, width, height, setUniforms) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-        gl.viewport(0, 0, width, height);
-        gl.clearColor(0.0, 0.0, 0.0, 1.0);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        if (typeof setUniforms === "function") setUniforms();
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.finish();
-      }
-
-      /* ------------------ Utility Helpers ------------------ */
-      // A general purpose helper for managing a cached OffscreenCanvas.
-      function getOrCreateOffscreenCanvas(width, height) {
-        if (
-          !getOrCreateOffscreenCanvas.canvas ||
-          getOrCreateOffscreenCanvas.canvas.width !== width ||
-          getOrCreateOffscreenCanvas.canvas.height !== height
-        ) {
-          getOrCreateOffscreenCanvas.canvas = new OffscreenCanvas(width, height);
-        }
-        return getOrCreateOffscreenCanvas.canvas;
-      }
-
-      /* ------------------ Shader Sources ------------------ */
-      const vsSource = `#version 300 es
-        in vec4 aVertexPosition;
-        uniform mat4 uModelViewMatrix;
-        uniform mat4 uProjectionMatrix;
-        out highp vec2 delta;
-        void main() {
-          gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-          delta = vec2(aVertexPosition[0], aVertexPosition[1]);
-        }
-      `;
-      const fsSource = `#version 300 es
-        precision highp float;
-        in highp vec2 delta;
-        out vec4 fragColor;
-        uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
-        uniform float uColorMax;     // Fixed iteration count for colouring.
-        uniform bool uUseHeuristic;
-        uniform sampler2D uLowResMask;
-        uniform vec2 uLowResDim;
-        uniform vec2 uFinalDim;
-        uniform vec4 poly1;
-        uniform vec4 poly2;
-        uniform sampler2D sequence;
-        float get_orbit_x(int i) {
-          i = i * 3;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        float get_orbit_y(int i) {
-          i = i * 3 + 1;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        float get_orbit_scale(int i) {
-          i = i * 3 + 2;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        void main() {
-          if (uUseHeuristic) {
-            vec2 uv = gl_FragCoord.xy / uFinalDim;
-            if (texture(uLowResMask, uv).r > 0.5) {
-              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-              return;
+        view(attrs, content) {
+          return div({
+            ...attrs,
+            onAttached: e => {
+              this.element = e;
+              this.element.style.opacity = "0";
+              this.element.style.visibility = "hidden";
             }
+          }, content);
+        }
+
+        show() {
+          if (this.tipState === "not_shown") {
+            this.tipState = "shown";
+            this.element.style.opacity = "1";
+            this.element.style.visibility = "visible";
           }
-          float q = uState[2] - 1.0;
-          float cq = q;
-          q = q + poly2[3];
-          float S = pow(2.0, q);
-          float dcx = delta[0];
-          float dcy = delta[1];
-          float x;
-          float y;
-          float sqrx = (dcx * dcx - dcy * dcy);
-          float sqry = (2.0 * dcx * dcy);
-          float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;      
-          float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
-          int k = int(poly2[2]);
-          int j = k;
-          x = get_orbit_x(k);
-          y = get_orbit_y(k);
-          for (int i = k; float(i) < uState[3]; i++) {
-            j++; k++;
-            float os = get_orbit_scale(k - 1);
-            dcx = delta[0] * pow(2.0, -q + cq - os);
-            dcy = delta[1] * pow(2.0, -q + cq - os);
-            float unS = pow(2.0, q - os);
-            if (isinf(unS)) unS = 0.0;
-            float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
-            dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
-            dx = tx;
-            q = q + os;
-            S = pow(2.0, q);
-            x = get_orbit_x(k);
-            y = get_orbit_y(k);
-            float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
-            float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
-            if (fx * fx + fy * fy > 4.0) break;
-            if (dx * dx + dy * dy > 1000000.0) {
-              dx /= 2.0;
-              dy /= 2.0;
-              q = q + 1.0;
-              S = pow(2.0, q);
-              dcx = delta[0] * pow(2.0, -q + cq);
-              dcy = delta[1] * pow(2.0, -q + cq);
-            }
-            if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
-              dx = fx;
-              dy = fy;
-              q = 0.0;
-              S = pow(2.0, q);
-              dcx = delta[0] * pow(2.0, -q + cq);
-              dcy = delta[1] * pow(2.0, -q + cq);
-              k = 0;
-              x = get_orbit_x(0);
-              y = get_orbit_y(0);
-            }
+        }
+
+        hide() {
+          if (this.tipState === "shown") {
+            this.tipState = "dismissed";
+            this.element.style.opacity = "0";
+            this.element.style.visibility = "hidden";
           }
-          float c_old = (uState[3] - float(j)) / uState[1];
-          vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
-          if (length(col_old) < 0.001) {
-            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+      }
+
+      class Marquee extends Component {
+        active = false;
+        startPos = { x: 0, y: 0 };
+        currentPos = { x: 0, y: 0 };
+        canvasEl = undefined;
+        onStart = undefined;
+        onEnd = undefined;
+
+        view(attrs) {
+          return canvas({
+            ...attrs,
+            onpointerdown: e => this.handlePointerDown(e),
+            onpointermove: e => this.handlePointerMove(e),
+            onpointerup: e => this.handlePointerUp(e),
+            onAttached: el => {
+              this.canvasEl = el;
+              el.addEventListener("touchstart", e => { e.preventDefault(); this.handlePointerDown(e); }, { passive: false });
+              el.addEventListener("touchmove", e => { e.preventDefault(); this.handlePointerMove(e); }, { passive: false });
+              el.addEventListener("touchend", e => { e.preventDefault(); this.handlePointerUp(e); }, { passive: false });
+            }
+          });
+        }
+
+        getEventCoords(e) {
+          const rect = this.canvasEl.getBoundingClientRect();
+          if (e.touches && e.touches.length) {
+            return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+          } else if (e.changedTouches && e.changedTouches.length) {
+            return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
+          }
+          return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        }
+
+        handlePointerDown(e) {
+          const coords = this.getEventCoords(e);
+          this.active = true;
+          this.startPos = { ...coords };
+          this.currentPos = { ...coords };
+          clearCanvas(this.canvasEl);
+          this.onStart && this.onStart();
+        }
+
+        handlePointerMove(e) {
+          if (!this.active) return;
+          this.currentPos = this.getEventCoords(e);
+          this.draw();
+        }
+
+        handlePointerUp(e) {
+          if (!this.active) return;
+          this.active = false;
+          const rect = this.getRect();
+          clearCanvas(this.canvasEl);
+          this.onEnd && this.onEnd(rect);
+        }
+
+        draw() {
+          if (!this.canvasEl) return;
+          const ctx = this.canvasEl.getContext("2d");
+          clearCanvas(this.canvasEl);
+          const left = Math.min(this.startPos.x, this.currentPos.x);
+          const top = Math.min(this.startPos.y, this.currentPos.y);
+          const width = Math.abs(this.currentPos.x - this.startPos.x);
+          const height = Math.abs(this.currentPos.y - this.startPos.y);
+          ctx.save();
+          ctx.strokeStyle = "#444";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6]);
+          ctx.strokeRect(left, top, width, height);
+          ctx.restore();
+        }
+
+        getRect() {
+          return {
+            left: Math.min(this.startPos.x, this.currentPos.x),
+            top: Math.min(this.startPos.y, this.currentPos.y),
+            width: Math.abs(this.currentPos.x - this.startPos.x),
+            height: Math.abs(this.currentPos.y - this.startPos.y)
+          };
+        }
+      }
+
+      class MandelbrotExplorer extends Component {
+        defaultCenterX = new Decimal(-0.75)
+        defaultCenterY = new Decimal(0.0)
+        defaultZ = new Decimal(1)
+        centerX = undefined
+        centerY = undefined;
+        z = undefined;
+        pleasantCanvasRatio
+
+        canvasWidth = window.innerWidth;
+        canvasHeight = window.innerHeight;
+
+        maxIterDefault = 1000;
+        maxIter = this.maxIterDefault;
+        colorMax = 1200;
+        colorChoice = 24.2;
+        zoomAnimationsEnabled = true;
+        animating = false;
+        rendering = false;
+        zoomOutFactor = 2;
+        maxZ = new Decimal(1E300);
+        prevZ = undefined
+
+        zoomStack = [];
+        zoomDuration = 600;
+
+        tip = new Tip();
+        marquee = new Marquee();
+        mandelbrotRenderer = undefined;
+
+        get zActual () { return this.z.times(this.pleasantCanvasRatio); }
+        set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }
+
+        busy () {
+          return this.animating || this.rendering;
+        }
+
+        attached() {
+          setTimeout(() => this.init(), 1);
+          window.addEventListener("resize", debounce(() => this.updateLayout(), 100));
+        }
+
+        async init() {
+          this.mandelbrotRenderer = await createMandelbrotRenderer();
+          this.marquee.onStart = () => this.tip.show();
+          this.marquee.onEnd = rect => this.processMarquee(rect);
+          this.updateLayout(() => this.initFromURL());
+        }
+
+        updateLayout(afterLayout) {
+          this.canvasWidth = this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
+          this.canvasHeight = this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;
+
+          this.pleasantCanvasRatio = this.canvasWidth / this.canvasHeight >= 1 ? 0.8 : 0.6;
+
+          if (afterLayout)
+            afterLayout();
+
+          this.renderFractal();
+        }
+
+        initFromURL() {
+          this.update(() => {
+            this.centerX = getNumericParam("x", d => new Decimal(d), this.defaultCenterX);
+            this.centerY = getNumericParam("y", d => new Decimal(d), this.defaultCenterY);
+            this.z = this.prevZ = getNumericParam("z", d => new Decimal(d), this.defaultZ);
+            this.maxIter = getNumericParam("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
+            this.zoomAnimationsEnabled = this.z.e < 20;
+          })
+        }
+
+        zArg() {
+          return this.z.lessThan(1000000) ?
+                 this.z.toSignificantDigits(3).toString() :
+                 this.z.toSignificantDigits(3).toExponential().replace("+", "");
+        }
+
+        updateURL() {
+          if (
+            this.centerX.equals(this.defaultCenterX) &&
+            this.centerY.equals(this.defaultCenterY) &&
+            this.z.equals(this.defaultZ) &&
+            this.maxIter === this.maxIterDefault
+          ) {
+            history.replaceState(null, "", window.location.pathname);
           } else {
-            float c_new = (uColorMax - float(j)) / uState[1];
-            vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
-            fragColor = vec4(col_new, 1.0);
+            const params = new URLSearchParams();
+            const sf = this.z.toFixed(2).length;
+            params.set("z", this.zArg());
+            params.set("iterations", this.maxIter);
+            params.set("x", this.centerX.toSignificantDigits(sf).toString());
+            params.set("y", this.centerY.toSignificantDigits(sf).toString());
+            history.replaceState(null, "", window.location.pathname + "?" + params.toString());
           }
         }
-      `;
 
-      /* ------------------ Layout and Buffer Helpers ------------------ */
-      function computeLayoutAndMatrices(canvas) {
-        const aspect = canvas.clientWidth / canvas.clientHeight;
-        const layout = aspect >= 1 ?
-          [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
-          [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
-        const projectionMatrix = mat4.create();
-        if (aspect >= 1)
-          mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
-        else
-          mat4.ortho(projectionMatrix, -1, 1, -1 / aspect, 1 / aspect, -1, 1);
-        const modelViewMatrix = mat4.create();
-        return { layout, projectionMatrix, modelViewMatrix };
-      }
+        toggleAnimation() {
+          if (this.busy()) return;
+          this.update(() => {
+            this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
+            this.zoomStack = []
+          });
+        }
 
-      function initBuffers(gl, canvas) {
-        const { layout } = computeLayoutAndMatrices(canvas);
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
-        return { position: positionBuffer };
+        dynamicMaxIter() {
+          const iter = 1000 + (150 * Math.max(0, this.z.e));
+          return Number(iter.toPrecision(2));
+        }
+
+        async renderFractal() {
+          const zoomingIn = this.prevZ.lessThan(this.z)
+          const zoomingOut = this.prevZ.greaterThan(this.z)
+
+          if (!this.animating) {
+            const idealMaxIter = this.dynamicMaxIter()
+            if ((zoomingIn && this.maxIter < idealMaxIter) || (zoomingOut && this.maxIter > idealMaxIter)) { // allows custom maxIter to override ideal
+              this.maxIter = idealMaxIter
+            }
+            Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum
+            this.prevZ = this.z
+          }
+
+          const z = new Decimal(1).dividedBy(this.zActual)
+          if (zoomingOut && this.z.lessThan(this.defaultZ.add(0.01))) { // we've hit rock bottom, reset defaults
+            this.reset()
+          }
+          else {            
+            const x = this.centerX.toString();
+            const y =  this.centerY.toString();
+            const r = z.toString();
+
+            try {
+              this.rendering = true
+              await this.mandelbrotRenderer(this.canvasEl, x, y, r, this.maxIter, this.colorChoice, this.colorMax, { lowRes: this.animating });
+            }
+            finally {
+              this.rendering = false
+            }
+
+            if (!this.animating) {
+              this.updateURL();
+            }
+          }
+        }
+
+        processMarquee(rect) {
+          const { left, top, width, height } = rect;
+          if (width < 5 || height < 5) return;
+          this.tip.hide();
+
+          const aspect = this.canvasWidth / this.canvasHeight;
+
+          const pixelToFractal = (px, py) => {
+            const normX = (px + 0.5) / this.canvasWidth;
+            const normY = (py + 0.5) / this.canvasHeight;
+            const canvasX = normX * (aspect >= 1 ? 2 * aspect : 2) + (aspect >= 1 ? -aspect : -1);
+            const canvasY = normY * (aspect >= 1 ? -2 : -2 / aspect) + (aspect >= 1 ? 1 : 1 / aspect);
+            const fractalX = this.centerX.plus(new Decimal(canvasX).dividedBy(this.zActual));
+            const fractalY = this.centerY.plus(new Decimal(canvasY).dividedBy(this.zActual));
+            return { x: fractalX, y: fractalY };
+          };
+
+          const p1 = pixelToFractal(left, top);
+          const p2 = pixelToFractal(left + width, top + height);
+
+          const newCenterX = p1.x.plus(p2.x).dividedBy(2);
+          const newCenterY = p1.y.plus(p2.y).dividedBy(2);
+
+          const fractalWidth = p2.x.minus(p1.x).abs();
+          const fractalHeight = p1.y.minus(p2.y).abs(); // p1.y is top, p2.y is bottom
+
+          const newActualWidth = fractalWidth.dividedBy(aspect >= 1 ? (2 * aspect) : 2);
+          const newActualHeight = fractalHeight.dividedBy(aspect >= 1 ? 2 : (2 / aspect));
+
+          const newR = Decimal.max(newActualWidth, newActualHeight);
+          const newZActual = new Decimal(1).dividedBy(newR);
+
+          if (newZActual.greaterThan(this.maxZ) || !newZActual.isFinite()) return;
+
+          if (!this.zoomAnimationsEnabled) {
+            this.centerX = newCenterX;
+            this.centerY = newCenterY;
+            this.zActual = newZActual;
+            this.renderFractal();
+          } else {
+            const prevState = { centerX: this.centerX, centerY: this.centerY, zActual: this.zActual };
+            const targetState = { centerX: newCenterX, centerY: newCenterY, zActual: newZActual };
+            this.zoomStack.push({ prevState, targetState });
+            this.animateZoom(prevState, targetState);
+          }
+        }
+
+        animateZoom(fromState, toState) {
+          this.animating = true;
+          const zoom = toState.zActual.dividedBy(fromState.zActual);
+          const startTime = performance.now();
+
+          const animateFrame = now => {
+            let t = (now - startTime) / this.zoomDuration;
+            if (t > 1) t = 1;
+
+            const interpolatedZoomFactor = new Decimal(1).plus(new Decimal(t).times(zoom.minus(1)));
+            const factor = new Decimal(t).times(zoom).dividedBy(interpolatedZoomFactor);
+
+            // Linearly interpolate the center position based on the factor
+            this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
+            this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
+            this.zActual = fromState.zActual.times(interpolatedZoomFactor);
+
+            if (t === 1) {
+              this.animating = false;
+            }
+            this.renderFractal();
+            if (t < 1) {
+              requestAnimationFrame(animateFrame);
+            }
+          };
+
+          requestAnimationFrame(animateFrame);
+        }
+
+        zoomOut() {
+          if (this.busy()) return;
+          if (!this.zoomAnimationsEnabled) {
+            this.zoomStack = [];
+          }
+          if (this.zoomAnimationsEnabled && this.zoomStack.length > 0) {
+            const zoomEntry = this.zoomStack.pop();
+            this.animateZoom(zoomEntry.targetState, zoomEntry.prevState);
+          }
+          else {
+            this.z = this.z.dividedBy(this.zoomOutFactor);
+            this.renderFractal();
+          }
+        }
+
+        reset() {
+          if (this.busy()) return;
+          this.update(() => {
+            this.zoomStack = [];
+            this.z = this.prevZ = this.defaultZ;
+            this.centerX = this.defaultCenterX;
+            this.centerY = this.defaultCenterY;
+            this.maxIter = this.maxIterDefault;
+            this.zoomAnimationsEnabled = true;
+          })
+          setTimeout(() => this.renderFractal(), 1);
+        }
+
+        saveImage() {
+          if (this.busy()) return;
+          const dataURL = this.canvasEl.toDataURL("image/jpeg");
+          let filename = "mandelbrot_" + location.search.slice(1) + ".jpeg";
+          const link = document.createElement("a");
+          link.href = dataURL;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+
+        view() {
+          return div(
+            canvas({
+              id: "mainCanvas",
+              width: this.canvasWidth,
+              height: this.canvasHeight,
+              onAttached: el => { this.canvasEl = el; }
+            }),
+            this.marquee.view({ id: "marqueeCanvas", width: this.canvasWidth, height: this.canvasHeight }),
+            this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
+            div({ class: "infoBox" },
+              h1({ class: "title" }, "Mandelbrot Explorer"),
+              div({ class: "controls" },
+                button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
+                button({ class: "controlButton", onclick: () => this.toggleAnimation() }, this.zoomAnimationsEnabled ? "Animated" : "Still"),
+                button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
+                button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out")
+              )
+            )
+          );
+        }
       }
 
       /*
-      createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
-      * Run with lower resolution than final image, to create mask applied to final image
-      */
-      function createMask(gl, programInfo, resWidth, resHeight) {
-        const offscreenCanvas = getOrCreateOffscreenCanvas(resWidth, resHeight);
-        const offscreenContext = offscreenCanvas.getContext("2d");
-        const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-        const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+       * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
+       *     
+       * - Calculates in low resolution before high resolution, enabling:
+       *   - Creating a maak to skip unnecessary calculations
+       *   - Animations with reduced resolution
+       * - Works with fractional zoom levels, not only integer powers of two
+       * - Works with any aspect ratio, automatically filling the available space
+       * - Consistent colouring independent of max iterations
+       * - Caching & async handling
+       */
 
-        drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
-          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
-        });
+      import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
+      import { init } from "https://cdn.skypack.dev/gmp-wasm";
+      
+      async function createMandelbrotRenderer() {
+        const { binding } = await init(); // Loads the MPFR binding
 
-        // copy WebGL image to local image because reading pixels across JS/WebGL boundary is very slow
-        const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
-        gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
-        offscreenContext.putImageData(imageData, 0, 0);
+        const offscreenCanvasCache = new Map();
 
-        const mask = new Uint8Array(resWidth * resHeight);
-        for (let y = 1; y < resHeight - 1; y++) {
-          for (let x = 1; x < resWidth - 1; x++) {
-            let allBlack = true;
-            // conservative masking: only mask a pixel if it AND all of its neighbours are black
-            for (let j = -1; j <= 1 && allBlack; j++) { 
-              for (let i = -1; i <= 1; i++) {
-                const idx = 4 * ((y + j) * resWidth + (x + i));
-                if (!(pixelBuffer[idx] === 0 &&
-                      pixelBuffer[idx + 1] === 0 &&
-                      pixelBuffer[idx + 2] === 0 &&
-                      pixelBuffer[idx + 3] === 255)) {
-                  allBlack = false;
-                  break;
-                }
-              }
-            }
-            mask[y * resWidth + x] = allBlack ? 255 : 0;
+        function getOrCreateOffscreenCanvasByKey(key, width, height) {
+          width = Number(width);
+          height = Number(height);
+          const cached = offscreenCanvasCache.get(key);
+          if (cached && cached.width === width && cached.height === height) {
+            return cached;
           }
+          const canvas = new OffscreenCanvas(width, height);
+          offscreenCanvasCache.set(key, canvas);
+          return canvas;
         }
 
-        gl.deleteFramebuffer(heuristicFbo);
-        gl.deleteTexture(heuristicTex);
+        /* ------------------ WebGL Resource Initialization and Caching ------------------ */
+        let webglResources = null;
 
-        return { mask, width: resWidth, height: resHeight };
-      }
+        // Modified to take a canvas parameter (which can be offscreen)
+        function fetchWebGLResources(canvas) {
+          if (webglResources && webglResources.canvas === canvas) {
+            ensureSize(canvas);
+            return webglResources;
+          }
 
-      /* ------------------ Orbit Calculation ------------------ */
-      function createReferenceOrbit(mandelbrot_state) {
-        const cx = mandelbrot_state.center[0],
-              cy = mandelbrot_state.center[1];
-        let x = mpfr_zero(), y = mpfr_zero();
-        const orbit = new Float32Array(1024 * 1024);
-        orbit.fill(-1);
-        const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
-        let polylim = 0,
+          const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+          if (!gl) throw new Error("WebGL2 not supported.");
+          const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+          const programInfo = {
+            program: shaderProgram,
+            attribLocations: {
+              vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
+            },
+            uniformLocations: {
+              projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
+              modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
+              uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
+              uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
+              uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
+              uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
+              state: gl.getUniformLocation(shaderProgram, "uState"),
+              colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
+              poly1: gl.getUniformLocation(shaderProgram, "poly1"),
+              poly2: gl.getUniformLocation(shaderProgram, "poly2"),
+              sequence: gl.getUniformLocation(shaderProgram, "sequence")
+            }
+          };
+          const buffers = initBuffers(gl, canvas);
+          webglResources = { gl, programInfo, buffers, canvas };
+          return webglResources;
+        }
+
+        function ensureSize(canvas) {
+          const { gl } = webglResources;
+          
+          // For both HTMLCanvasElement and OffscreenCanvas, use width and height properties.
+          canvas.width = canvas.clientWidth || canvas.width;
+          canvas.height = canvas.clientHeight || canvas.height;
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
+          webglResources.buffers = initBuffers(gl, canvas);
+          gl.useProgram(webglResources.programInfo.program);
+          gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+          gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+        }
+
+        /* ------------------ Async Helper ------------------ */
+
+        // runLast ensures only the latest call executes
+        const runLast = (() => {
+          let runLock = false;
+          let pendingRun = null;
+          const runLastImp = (fn, ...args) => {
+            if (runLock) {
+              pendingRun = { fn, args };
+              return;
+            }
+            runLock = true;
+            try {
+              // Execute the provided function with the given arguments.
+              fn(...args);
+            } catch (e) {
+              console.error("Error in runLast function:", e);
+            }
+            runLock = false;
+            // If a pending call was queued, schedule it.
+            if (pendingRun) {
+              const { fn: nextFn, args: nextArgs } = pendingRun;
+              pendingRun = null;
+              setTimeout(() => runLastImp(nextFn, ...nextArgs), 0);
+            }
+          };
+          return runLastImp;
+        })();
+
+        /* ------------------ Arithmetic Helpers ------------------ */
+        function mpfr_zero() {
+          const zero = binding.mpfr_t();
+          binding.mpfr_init2(zero, 1200);
+          binding.mpfr_set_d(zero, 0, 0);
+          return zero;
+        }
+        function get_exp(val) {
+          const tmp = mpfr_zero();
+          binding.mpfr_log2(tmp, val, 0);
+          return binding.mpfr_get_d(tmp, 0);
+        }
+        function alignExponents(a, b) {
+          let [am, ae] = a, [bm, be] = b;
+          const retE = Math.max(ae, be);
+          if (retE > ae) am *= Math.pow(2, ae - retE);
+          else bm *= Math.pow(2, be - retE);
+          return [am, bm, retE];
+        }
+        function sub(a, b) {
+          let [am, bm, e] = alignExponents(a, b);
+          return [am - bm, e];
+        }
+        function add(a, b) {
+          let [am, bm, e] = alignExponents(a, b);
+          return [am + bm, e];
+        }
+        function mul(a, b) {
+          let [am, ae] = a, [bm, be] = b;
+          let m = am * bm, e = ae + be;
+          if (m !== 0) {
+            const logm = Math.round(Math.log2(Math.abs(m)));
+            m = m / Math.pow(2, logm);
+            e += logm;
+          }
+          return [m, e];
+        }
+        function maxabs(a, b) {
+          let [am, bm, e] = alignExponents(a, b);
+          return [Math.max(Math.abs(am), Math.abs(bm)), e];
+        }
+        function gt(a, b) {
+          let [am] = alignExponents(a, b);
+          let [, bm] = alignExponents(a, b);
+          return am > bm;
+        }
+        function floaty(d) {
+          return Math.pow(2, d[1]) * d[0];
+        }
+
+        /* ------------------ WebGL Helpers ------------------ */
+        function loadShader(gl, type, source) {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            throw new Error("Error compiling shader: " + gl.getShaderInfoLog(shader));
+          return shader;
+        }
+
+        function initShaderProgram(gl, vsSource, fsSource) {
+          const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+          const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+          const shaderProgram = gl.createProgram();
+          gl.attachShader(shaderProgram, vertexShader);
+          gl.attachShader(shaderProgram, fragmentShader);
+          gl.linkProgram(shaderProgram);
+          if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS))
+            throw new Error("Unable to initialize shader program: " + gl.getProgramInfoLog(shaderProgram));
+          return shaderProgram;
+        }
+
+        function createAndSetupTexture(gl, unit, width, height, internalFormat, format, type, data = null) {
+          const tex = gl.createTexture();
+          gl.activeTexture(gl.TEXTURE0 + unit);
+          gl.bindTexture(gl.TEXTURE_2D, tex);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+          gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+          gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
+          return tex;
+        }
+
+        function createFramebufferForTexture(gl, tex) {
+          const fbo = gl.createFramebuffer();
+          gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+          if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
+            throw new Error("Framebuffer not complete.");
+          return fbo;
+
+        }
+        function drawPass(gl, framebuffer, width, height, setUniforms) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+          gl.viewport(0, 0, width, height);
+          gl.clearColor(0.0, 0.0, 0.0, 1.0);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          if (typeof setUniforms === "function") setUniforms();
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.finish();
+        }
+
+        /* ------------------ Shader Sources ------------------ */
+        const vsSource = `#version 300 es
+          in vec4 aVertexPosition;
+          uniform mat4 uModelViewMatrix;
+          uniform mat4 uProjectionMatrix;
+          out highp vec2 delta;
+          void main() {
+            gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+            delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+          }
+        `;
+
+        const fsSource = `#version 300 es
+          precision highp float;
+          in highp vec2 delta;
+          out vec4 fragColor;
+          uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
+          uniform float uColorMax;     // Fixed iteration count for colouring.
+          uniform bool uUseHeuristic;
+          uniform sampler2D uLowResMask;
+          uniform vec2 uLowResDim;
+          uniform vec2 uFinalDim;
+          uniform vec4 poly1;
+          uniform vec4 poly2;
+          uniform sampler2D sequence;
+          float get_orbit_x(int i) {
+            i = i * 3;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+          }
+          float get_orbit_y(int i) {
+            i = i * 3 + 1;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+          }
+          float get_orbit_scale(int i) {
+            i = i * 3 + 2;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+          }
+          void main() {
+            if (uUseHeuristic) {
+              vec2 uv = gl_FragCoord.xy / uFinalDim;
+              if (texture(uLowResMask, uv).r > 0.5) {
+                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+              }
+            }
+            float q = uState[2] - 1.0;
+            float cq = q;
+            q = q + poly2[3];
+            float S = pow(2.0, q);
+            float dcx = delta[0];
+            float dcy = delta[1];
+            float x;
+            float y;
+            float sqrx = (dcx * dcx - dcy * dcy);
+            float sqry = (2.0 * dcx * dcy);
+            float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;
+            float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
+            int k = int(poly2[2]);
+            int j = k;
+            x = get_orbit_x(k);
+            y = get_orbit_y(k);
+            for (int i = k; float(i) < uState[3]; i++) {
+              j++; k++;
+              float os = get_orbit_scale(k - 1);
+              dcx = delta[0] * pow(2.0, -q + cq - os);
+              dcy = delta[1] * pow(2.0, -q + cq - os);
+              float unS = pow(2.0, q - os);
+              if (isinf(unS)) unS = 0.0;
+              float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
+              dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
+              dx = tx;
+              q = q + os;
+              S = pow(2.0, q);
+              x = get_orbit_x(k);
+              y = get_orbit_y(k);
+              float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
+              float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
+              if (fx * fx + fy * fy > 4.0) break;
+              if (dx * dx + dy * dy > 1000000.0) {
+                dx /= 2.0;
+                dy /= 2.0;
+                q = q + 1.0;
+                S = pow(2.0, q);
+                dcx = delta[0] * pow(2.0, -q + cq);
+                dcy = delta[1] * pow(2.0, -q + cq);
+              }
+              if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
+                dx = fx;
+                dy = fy;
+                q = 0.0;
+                S = pow(2.0, q);
+                dcx = delta[0] * pow(2.0, -q + cq);
+                dcy = delta[1] * pow(2.0, -q + cq);
+                k = 0;
+                x = get_orbit_x(0);
+                y = get_orbit_y(0);
+              }
+            }
+            float c_old = (uState[3] - float(j)) / uState[1];
+            vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
+            if (length(col_old) < 0.001) {
+              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            } else {
+              float c_new = (uColorMax - float(j)) / uState[1];
+              vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
+              fragColor = vec4(col_new, 1.0);
+            }
+          }
+        `;
+
+        /* ------------------ Layout and Buffer Helpers ------------------ */
+        function computeLayoutAndMatrices(canvas) {
+          const width = canvas.width;
+          const height = canvas.height;
+          const aspect = width / height;
+          const layout = aspect >= 1 ?
+            [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
+            [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0, -1.0, -1.0 / aspect];
+          const projectionMatrix = mat4.create();
+          if (aspect >= 1)
+            mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
+          else
+            mat4.ortho(projectionMatrix, -1, 1, -1 / aspect, 1 / aspect, -1, 1);
+          const modelViewMatrix = mat4.create();
+          return { layout, projectionMatrix, modelViewMatrix };
+        }
+
+        function initBuffers(gl, canvas) {
+          const { layout } = computeLayoutAndMatrices(canvas);
+          const positionBuffer = gl.createBuffer();
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
+          return { position: positionBuffer };
+        }
+
+        /*
+         * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
+         * Run with lower resolution than final image, to create mask applied to final image
+         */
+        function createMask(gl, programInfo, resWidth, resHeight)
+        {
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
+          const offscreenContext = offscreenCanvas.getContext("2d");
+          const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+          const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+
+          drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
+            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
+          });
+
+          // Copy WebGL image to a local image; reading pixels is slow so we use the offscreen canvas.
+          const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+          gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
+          offscreenContext.putImageData(imageData, 0, 0);
+
+          const mask = new Uint8Array(resWidth * resHeight);
+          for (let y = 1; y < resHeight - 1; y++) {
+            for (let x = 1; x < resWidth - 1; x++) {
+              let allBlack = true;
+              // only mask a pixel if it and all of its neighbours are black.
+              // this means a black pixel near an edge of colour still gets computed
+              // because maybe in high resolution it will be coloured
+              // only entirely black regions are part of mask
+              for (let j = -1; j <= 1 && allBlack; j++) {
+                for (let i = -1; i <= 1; i++) {
+                  const idx = 4 * ((y + j) * resWidth + (x + i));
+                  if (
+                    !(pixelBuffer[idx] === 0 &&
+                      pixelBuffer[idx + 1] === 0 &&
+                      pixelBuffer[idx + 2] === 0 &&
+                      pixelBuffer[idx + 3] === 255)
+                  ) {
+                    allBlack = false;
+                    break;
+                  }
+                }
+              }
+              mask[y * resWidth + x] = allBlack ? 255 : 0;
+            }
+          }
+
+          gl.deleteFramebuffer(heuristicFbo);
+          gl.deleteTexture(heuristicTex);
+
+          return { mask, width: resWidth, height: resHeight };
+        }
+
+        /* ------------------ Orbit Calculation ------------------ */
+        function createReferenceOrbit(mandelbrot_state) {
+          const cx = mandelbrot_state.center[0],
+            cy = mandelbrot_state.center[1];
+          let x = mpfr_zero(), y = mpfr_zero();
+          const orbit = new Float32Array(1024 * 1024);
+          orbit.fill(-1);
+          const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
+          let polylim = 0,
             Bx = [0, 0], By = [0, 0],
             Cx = [0, 0], Cy = [0, 0],
             Dx = [0, 0], Dy = [0, 0],
             poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
             not_failed = true;
-        for (let i = 0; i < mandelbrot_state.iterations; i++) {
-          const x_exponent = binding.mpfr_get_exp(x);
-          const y_exponent = binding.mpfr_get_exp(y);
-          let scale_exponent = Math.max(x_exponent, y_exponent);
-          if (scale_exponent < -10000) scale_exponent = 0;
-          let tmp = 0;
-          orbit[3 * i]     = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
-          orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
-          orbit[3 * i + 2] = scale_exponent;
-          const fx = [orbit[3 * i], orbit[3 * i + 2]];
-          const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
-          binding.mpfr_mul(txx, x, x, 0);
-          binding.mpfr_mul(txy, x, y, 0);
-          binding.mpfr_mul(tyy, y, y, 0);
-          binding.mpfr_sub(x, txx, tyy, 0);
-          binding.mpfr_add(x, x, cx, 0);
-          binding.mpfr_add(y, txy, txy, 0);
-          binding.mpfr_add(y, y, cy, 0);
-          const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
-          [Bx, By, Cx, Cy, Dx, Dy] = [
-            add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
-            mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
-            sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
-            add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
-            mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
-            mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
-          ];
-          tmp = 0;
-          const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
-          const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
-          if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(mandelbrot_state.radius)], maxabs(Dx, Dy)))) {
-            if (not_failed) {
-              poly = prev_poly;
-              polylim = i;
+          for (let i = 0; i < mandelbrot_state.iterations; i++) {
+            const x_exponent = binding.mpfr_get_exp(x);
+            const y_exponent = binding.mpfr_get_exp(y);
+            let scale_exponent = Math.max(x_exponent, y_exponent);
+            if (scale_exponent < -10000) scale_exponent = 0;
+            let tmp = 0;
+            orbit[3 * i] = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
+            orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
+            orbit[3 * i + 2] = scale_exponent;
+            const fx = [orbit[3 * i], orbit[3 * i + 2]];
+            const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
+            binding.mpfr_mul(txx, x, x, 0);
+            binding.mpfr_mul(txy, x, y, 0);
+            binding.mpfr_mul(tyy, y, y, 0);
+            binding.mpfr_sub(x, txx, tyy, 0);
+            binding.mpfr_add(x, x, cx, 0);
+            binding.mpfr_add(y, txy, txy, 0);
+            binding.mpfr_add(y, y, cy, 0);
+            const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
+            [Bx, By, Cx, Cy, Dx, Dy] = [
+              add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
+              mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
+              sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
+              add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
+              mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
+              mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
+            ];
+            tmp = 0;
+            const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
+            const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
+            if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(mandelbrot_state.radius)], maxabs(Dx, Dy)))) {
+              if (not_failed) {
+                poly = prev_poly;
+                polylim = i;
+              }
+            } else {
+              not_failed = false;
             }
-          } else {
-            not_failed = false;
+            if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
           }
-          if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
+          return [orbit, poly, polylim];
         }
-        return [orbit, poly, polylim];
-      }
 
-      /* ------------------ Rendering Passes ------------------ */
-      function renderLowRes(gl, programInfo, canvas, scaleFactor) {
-        const lowWidth = Math.floor(canvas.clientWidth / scaleFactor);
-        const lowHeight = Math.floor(canvas.clientHeight / scaleFactor);
-        const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
-        const maskTex = createAndSetupTexture(gl, 2, lowWidth, lowHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-        drawPass(gl, null, canvas.clientWidth, canvas.clientHeight, () => {
-          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
-          gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-          gl.uniform2f(programInfo.uniformLocations.uLowResDim, lowWidth, lowHeight);
-          gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.clientWidth, canvas.clientHeight);
-        });
-        gl.deleteTexture(maskTex);
-      }
+        /* ------------------ Rendering Passes ------------------ */
+        function renderLowRes(gl, programInfo, canvas, scaleFactor) {          
+          const lowWidth = Math.floor(canvas.width / scaleFactor);
+          const lowHeight = Math.floor(canvas.height / scaleFactor);
+          const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
+          const maskTex = createAndSetupTexture(gl, 2, lowWidth, lowHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+          drawPass(gl, null, canvas.width, canvas.height, () => {
+            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+            gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+            gl.uniform2f(programInfo.uniformLocations.uLowResDim, lowWidth, lowHeight);
+            gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.width, canvas.height);
+          });
+          gl.deleteTexture(maskTex);
+        }
 
-      function renderHighRes(gl, programInfo, canvas, scaleFactor) {
-        const finalWidth = Math.floor(canvas.clientWidth / scaleFactor);
-        const finalHeight = Math.floor(canvas.clientHeight / scaleFactor);
-        const maskRes = Math.floor(finalWidth / scaleFactor);
-        const { mask, width: mWidth, height: mHeight } = createMask(gl, programInfo, maskRes, Math.floor(finalHeight / scaleFactor));
-        const maskTex = createAndSetupTexture(gl, 2, mWidth, mHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-        const finalTex = createAndSetupTexture(gl, 4, finalWidth, finalHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-        const finalFbo = createFramebufferForTexture(gl, finalTex);
-        drawPass(gl, finalFbo, finalWidth, finalHeight, () => {
-          gl.uniform2f(programInfo.uniformLocations.uFinalDim, finalWidth, finalHeight);
-          gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
-          gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-        });
-        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
-        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-        gl.viewport(0, 0, canvas.clientWidth, canvas.clientHeight);
-        gl.blitFramebuffer(
-          0, 0, finalWidth, finalHeight,
-          0, 0, canvas.clientWidth, canvas.clientHeight,
-          gl.COLOR_BUFFER_BIT, gl.NEAREST
-        );
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.deleteFramebuffer(finalFbo);
-        gl.deleteTexture(finalTex);
-        gl.deleteTexture(maskTex);
-      }
+        function renderHighRes(gl, programInfo, canvas, scaleFactor) {
+          const finalWidth = Math.floor(canvas.width / scaleFactor);
+          const finalHeight = Math.floor(canvas.height / scaleFactor);
+          const maskRes = Math.floor(finalWidth / scaleFactor);
+          const { mask, width: mWidth, height: mHeight } = createMask(gl, programInfo, maskRes, Math.floor(finalHeight / scaleFactor));
+          const maskTex = createAndSetupTexture(gl, 2, mWidth, mHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+          const finalTex = createAndSetupTexture(gl, 4, finalWidth, finalHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+          const finalFbo = createFramebufferForTexture(gl, finalTex);
+          drawPass(gl, finalFbo, finalWidth, finalHeight, () => {
+            gl.uniform2f(programInfo.uniformLocations.uFinalDim, finalWidth, finalHeight);
+            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+            gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
+          });
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
+          gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.blitFramebuffer(0, 0, finalWidth, finalHeight, 0, 0, canvas.width, canvas.height, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          gl.deleteFramebuffer(finalFbo);
+          gl.deleteTexture(finalTex);
+          gl.deleteTexture(maskTex);
+        }
 
-      /**
-      * Renders the Mandelbrot set on the provided canvas.
-      *
-      * @param {HTMLCanvasElement} canvas - The canvas element where the Mandelbrot set will be drawn.
-      * @param {Decimal} x - The x-coordinate of the Mandelbrot center (must be a Decimal instance).
-      * @param {Decimal} y - The y-coordinate of the Mandelbrot center (must be a Decimal instance).
-      * @param {Decimal} r - The radius/zoom magnification for the Mandelbrot set calculation (must be a Decimal instance).
-      * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
-      * @param {number} cmapscale - The scale factor applied to the color map for shading.
-      * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
-      * @param {Object} [options={}] - Optional parameters for rendering.
-      * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
-      * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
-      *
-      * @returns {void}
-      */
-      function render(canvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {
-        const { gl, programInfo, buffers } = fetchWebGLResources(canvas);
+        /**
+        * Renders the Mandelbrot set on the provided canvas.
+        *
+        * @param {HTMLCanvasElement} canvas - The canvas element where the Mandelbrot set will be drawn.
+        * @param {string} x - The x-coordinate of the Mandelbrot center.
+        * @param {string} y - The y-coordinate of the Mandelbrot center.
+        * @param {string} r - The radius/zoom magnification for the Mandelbrot set calculation.
+        * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
+        * @param {number} cmapscale - The scale factor applied to the color map for shading.
+        * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
+        * @param {Object} [options={}] - Optional parameters for rendering.
+        * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
+        * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
+        *
+        * @returns {void}
+        */
+        function render(mainCanvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey(
+            'mainRender',
+            mainCanvas.clientWidth || mainCanvas.width,
+            mainCanvas.clientHeight || mainCanvas.height
+          );
+          
+          // Fetch (or create) WebGL resources on the offscreen canvas.
+          const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
 
-        const mandelbrot_state = {
-          center: [mpfr_zero(), mpfr_zero()],
-          radius: mpfr_zero(),
-          iterations,
-          cmapscale,
-          colorMax,
-          set(x, y, r) {
-            if (!(x instanceof Decimal) || !(y instanceof Decimal) || !(r instanceof Decimal))
-              throw new Error("Parameters x, y, r must be Decimal instances.");
-            binding.mpfr_set_string(this.center[0], x.toString(), 10, 0);
-            binding.mpfr_set_string(this.center[1], y.toString(), 10, 0);
-            binding.mpfr_set_string(this.radius, r.toString(), 10, 0);
+          // Set up the Mandelbrot state.
+          const mandelbrot_state = {
+            center: [mpfr_zero(), mpfr_zero()],
+            radius: mpfr_zero(),
+            iterations,
+            cmapscale,
+            colorMax,
+            set(x, y, r) {
+              binding.mpfr_set_string(this.center[0], x, 10, 0);
+              binding.mpfr_set_string(this.center[1], y, 10, 0);
+              binding.mpfr_set_string(this.radius, r, 10, 0);
+            }
+          };
+          mandelbrot_state.set(x, y, r);
+
+          // Compute layout matrices and set up buffers.
+          const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(offscreenCanvas);
+          gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+          gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+          gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+          gl.useProgram(programInfo.program);
+          gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+          gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+
+          // Create the reference orbit and set up texture.
+          const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
+          createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
+
+          // Set uniform state values.
+          const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
+          const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
+          gl.uniform4f(
+            programInfo.uniformLocations.state,
+            mandelbrot_state.center[0],
+            mandelbrot_state.cmapscale,
+            1 + get_exp(mandelbrot_state.radius),
+            mandelbrot_state.iterations
+          );
+          if (mandelbrot_state.colorMax !== undefined) {
+            gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
           }
-        };
-        mandelbrot_state.set(x, y, r);
 
-        const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-        gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
-        gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
-        gl.useProgram(programInfo.program);
-        gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
-        gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
-        const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
-        createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
-        const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
-        const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
-        gl.uniform4f(
-          programInfo.uniformLocations.state,
-          mandelbrot_state.center[0],
-          mandelbrot_state.cmapscale,
-          1 + get_exp(mandelbrot_state.radius),
-          mandelbrot_state.iterations
-        );
-        if (mandelbrot_state.colorMax !== undefined)
-          gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
+          // Compute and update polynomial scaling.
+          const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
+          const poly_scale = [1, -poly_scale_exp[1]];
+          const poly_scaled = [
+            mul(poly_scale, poly[0]),
+            mul(poly_scale, poly[1]),
+            mul(poly_scale, mul([r_val, rexp], poly[2])),
+            mul(poly_scale, mul([r_val, rexp], poly[3])),
+            mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
+            mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
+          ].map(floaty);
+          gl.uniform4f(
+            programInfo.uniformLocations.poly1,
+            poly_scaled[0],
+            poly_scaled[1],
+            poly_scaled[2],
+            poly_scaled[3]
+          );
+          gl.uniform4f(
+            programInfo.uniformLocations.poly2,
+            poly_scaled[4],
+            poly_scaled[5],
+            polylim,
+            poly_scale_exp[1]
+          );
 
-        // Compute and update polynomial scaling here (if needed).
-        const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
-        const poly_scale = [1, -poly_scale_exp[1]];
-        const poly_scaled = [
-          mul(poly_scale, poly[0]),
-          mul(poly_scale, poly[1]),
-          mul(poly_scale, mul([r_val, rexp], poly[2])),
-          mul(poly_scale, mul([r_val, rexp], poly[3])),
-          mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
-          mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
-        ].map(floaty);
-        gl.uniform4f(
-          programInfo.uniformLocations.poly1,
-          poly_scaled[0],
-          poly_scaled[1],
-          poly_scaled[2],
-          poly_scaled[3]
-        );
-        gl.uniform4f(
-          programInfo.uniformLocations.poly2,
-          poly_scaled[4],
-          poly_scaled[5],
-          polylim,
-          poly_scale_exp[1]
-        );
+          // Render either low or high resolution based on options.
+          if (!options.lowRes)
+            renderLowRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
+          else
+            renderHighRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
 
-        if (!options.lowRes)
-          renderLowRes(gl, programInfo, canvas, options.scaleFactor || 3);
-        else
-          renderHighRes(gl, programInfo, canvas, options.scaleFactor || 3);
-      }
-
-      return render;
-    }
-
-    function debounce(fn, ms) {
-      let t;
-      return function(...args) {
-        clearTimeout(t);
-        t = setTimeout(() => fn.apply(this, args), ms);
-      };
-    }
-
-    const getNumericParam = (key, parser, defaultValue, min, max) => {
-      const params = new URLSearchParams(window.location.search); 
-      const str = params.get(key);
-      if (str === null) return defaultValue;
-      try {
-        let val = parser(str);
-        return (typeof val === "number" ? isNaN(val) : val?.isNaN?.()) ? defaultValue
-          : (min !== undefined && val < min ? min : (max !== undefined && val > max ? max : val));
-      } catch (e) {
-        return defaultValue;
-      }
-    };
-
-    function clearCanvas(canvasEl) {
-      canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
-    }
-
-    class Tip extends Component {
-      element = undefined;
-      tipState = "not_shown";
-
-      view(attrs, content) {
-        return div({
-          ...attrs,
-          onAttached: e => {
-            this.element = e;
-            this.element.style.opacity = "0";
-            this.element.style.visibility = "hidden";
-          }
-        }, content);
-      }
-
-      show() {
-        if (this.tipState === "not_shown") {
-          this.tipState = "shown";
-          this.element.style.opacity = "1";
-          this.element.style.visibility = "visible";
+          // Transfer the rendered image from the offscreen canvas to the main canvas.
+          const bitmap = offscreenCanvas.transferToImageBitmap();
+          const mainCtx = mainCanvas.getContext("2d");
+          mainCtx.drawImage(bitmap, 0, 0, mainCanvas.clientWidth || mainCanvas.width, mainCanvas.clientHeight || mainCanvas.height);
         }
+
+        return (...args) => runLast(render, ...args);
       }
 
-      hide() {
-        if (this.tipState === "shown") {
-          this.tipState = "dismissed";
-          this.element.style.opacity = "0";
-          this.element.style.visibility = "hidden";
-        }
-      }
-    }
-
-    class Marquee extends Component {
-      active = false;
-      startPos = { x: 0, y: 0 };
-      currentPos = { x: 0, y: 0 };
-      canvasEl = undefined;
-      onStart = undefined;
-      onEnd = undefined;
-
-      view(attrs) {
-        return canvas({
-          ...attrs,
-          onpointerdown: e => this.handlePointerDown(e),
-          onpointermove: e => this.handlePointerMove(e),
-          onpointerup: e => this.handlePointerUp(e),
-          onAttached: el => {
-            this.canvasEl = el;
-            el.addEventListener("touchstart", e => { e.preventDefault(); this.handlePointerDown(e); }, { passive: false });
-            el.addEventListener("touchmove", e => { e.preventDefault(); this.handlePointerMove(e); }, { passive: false });
-            el.addEventListener("touchend", e => { e.preventDefault(); this.handlePointerUp(e); }, { passive: false });
-          }
-        });
-      }
-
-      getEventCoords(e) {
-        const rect = this.canvasEl.getBoundingClientRect();
-        if (e.touches && e.touches.length) {
-          return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
-        } else if (e.changedTouches && e.changedTouches.length) {
-          return { x: e.changedTouches[0].clientX - rect.left, y: e.changedTouches[0].clientY - rect.top };
-        }
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      }
-
-      handlePointerDown(e) {
-        const coords = this.getEventCoords(e);
-        this.active = true;
-        this.startPos = { ...coords };
-        this.currentPos = { ...coords };
-        clearCanvas(this.canvasEl);
-        this.onStart && this.onStart();
-      }
-
-      handlePointerMove(e) {
-        if (!this.active) return;
-        this.currentPos = this.getEventCoords(e);
-        this.draw();
-      }
-
-      handlePointerUp(e) {
-        if (!this.active) return;
-        this.active = false;
-        const rect = this.getRect();
-        clearCanvas(this.canvasEl);
-        this.onEnd && this.onEnd(rect);
-      }
-
-      draw() {
-        if (!this.canvasEl) return;
-        const ctx = this.canvasEl.getContext("2d");
-        clearCanvas(this.canvasEl);
-        const left = Math.min(this.startPos.x, this.currentPos.x);
-        const top = Math.min(this.startPos.y, this.currentPos.y);
-        const width = Math.abs(this.currentPos.x - this.startPos.x);
-        const height = Math.abs(this.currentPos.y - this.startPos.y);
-        ctx.save();
-        ctx.strokeStyle = "#444";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6]);
-        ctx.strokeRect(left, top, width, height);
-        ctx.restore();
-      }
-
-      getRect() {
-        return {
-          left: Math.min(this.startPos.x, this.currentPos.x),
-          top: Math.min(this.startPos.y, this.currentPos.y),
-          width: Math.abs(this.currentPos.x - this.startPos.x),
-          height: Math.abs(this.currentPos.y - this.startPos.y)
-        };
-      }
-    }
-
-    class MandelbrotExplorer extends Component {                 
-      defaultCenterX = new Decimal(-0.75)
-      defaultCenterY = new Decimal(0.0)
-      defaultZ = new Decimal(1)                        
-      centerX = undefined
-      centerY = undefined;   
-      z = undefined;  
-      pleasantCanvasRatio
-      
-      canvasWidth = window.innerWidth;
-      canvasHeight = window.innerHeight;
-
-      maxIterDefault = 1000;
-      maxIter = this.maxIterDefault;
-      colorMax = 1200;
-      colorChoice = 24.2;
-      zoomAnimationsEnabled = true;
-      animating = false;      
-      zoomOutFactor = 2;
-      maxZ = new Decimal(1E300);
-      prevZ = undefined
-      
-      zoomStack = [];
-      zoomDuration = 600;
-
-      tip = new Tip();
-      marquee = new Marquee();
-      mandelbrotRenderer = undefined;
-
-      get zActual () { return this.z.times(this.pleasantCanvasRatio); }
-      set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }            
-
-      attached() {        
-        setTimeout(() => this.init(), 1);
-        window.addEventListener("resize", debounce(() => this.updateLayout(), 100));
-      }
-
-      async init() {
-        this.mandelbrotRenderer = await createMandelbrotRenderer();        
-        this.marquee.onStart = () => this.tip.show();
-        this.marquee.onEnd = rect => this.processMarquee(rect);
-        this.updateLayout(() => this.initFromURL());
-      }
-
-      updateLayout(afterLayout) {        
-        this.canvasWidth = this.canvasEl.width = this.marquee.canvasEl.width = window.innerWidth;
-        this.canvasHeight = this.canvasEl.height = this.marquee.canvasEl.height = window.innerHeight;  
-
-        this.pleasantCanvasRatio = this.canvasWidth / this.canvasHeight >= 1 ? 0.8 : 0.6;
-
-        if (afterLayout)
-          afterLayout();
-
-        this.renderFractal();
-      }
-
-      initFromURL() {
-        this.update(() => {
-          this.centerX = getNumericParam ("x", d => new Decimal(d), this.defaultCenterX);
-          this.centerY = getNumericParam ("y", d => new Decimal(d), this.defaultCenterY);
-          this.z = this.prevZ = getNumericParam ("z", d => new Decimal(d), this.defaultZ);
-          this.maxIter = getNumericParam ("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
-          this.zoomAnimationsEnabled = this.z.e < 20;
-        })        
-      }
-
-      zArg() {
-        return this.z.lessThan (1000000) ?
-               this.z.toSignificantDigits(3).toString() :
-               this.z.toSignificantDigits(3).toExponential().replace("+","");
-      }
-      
-      updateURL() {
-        if (
-          this.centerX.equals(this.defaultCenterX) &&
-          this.centerY.equals(this.defaultCenterY) &&
-          this.z.equals(this.defaultZ) &&
-          this.maxIter === this.maxIterDefault
-        ) {
-          history.replaceState(null, "", window.location.pathname);
-        } else {                    
-          const params = new URLSearchParams();
-          const sf = this.z.toFixed(2).length;
-          params.set("z", this.zArg());
-          params.set("iterations", this.maxIter);
-          params.set("x", this.centerX.toSignificantDigits(sf).toString());
-          params.set("y", this.centerY.toSignificantDigits(sf).toString());          
-          history.replaceState(null, "", window.location.pathname + "?" + params.toString());
-        }
-      }
-
-      toggleAnimation() {
-        if (this.animating) return;
-        this.update(() => {      
-          this.zoomAnimationsEnabled = !this.zoomAnimationsEnabled;
-          this.zoomStack = []
-        });
-      }
-
-      dynamicMaxIter() {
-        const iter = 1000 + (150 * Math.max(0,this.z.e));
-        return Number(iter.toPrecision(2));
-      }
-
-      renderFractal() { 
-        const zoomingIn = this.prevZ.lessThan(this.z)
-        const zoomingOut = this.prevZ.greaterThan(this.z)        
-
-        if (! this.animating) {        
-          const idealMaxIter = this.dynamicMaxIter()
-          if ((zoomingIn && this.maxIter < idealMaxIter) || (zoomingOut && this.maxIter > idealMaxIter)) { // allows custom maxIter to override ideal
-            this.maxIter = idealMaxIter          
-          }        
-          Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum       
-          this.prevZ = this.z
-        }
-        
-        const z = new Decimal(1).dividedBy(this.zActual)    
-        if (zoomingOut && this.z.lessThan(this.defaultZ.add(0.01))) { // we've hit rock bottom, reset defaults      
-          this.reset()
-        }
-        else {            
-          this.mandelbrotRenderer (this.canvasEl, this.centerX, this.centerY, z, this.maxIter, this.colorChoice, this.colorMax, {lowRes: this.animating});
-          if (! this.animating) {
-            this.updateURL();    
-          }                
-        }
-      }
-
-      processMarquee(rect) {
-        const { left, top, width, height } = rect;
-        if (width < 5 || height < 5) return;        
-        this.tip.hide();
-
-        const aspect = this.canvasWidth / this.canvasHeight;
-        
-        const pixelToFractal = (px, py) => {
-            const normX = (px + 0.5) / this.canvasWidth;
-            const normY = (py + 0.5) / this.canvasHeight;                        
-            const canvasX = normX * (aspect >= 1 ? 2 * aspect : 2) + (aspect >= 1 ? -aspect : -1);
-            const canvasY = normY * (aspect >= 1 ? -2 : -2 / aspect) + (aspect >= 1 ? 1 : 1 / aspect);            
-            const fractalX = this.centerX.plus(new Decimal(canvasX).dividedBy(this.zActual));
-            const fractalY = this.centerY.plus(new Decimal(canvasY).dividedBy(this.zActual));
-            return { x: fractalX, y: fractalY };
-        };
-
-        const p1 = pixelToFractal(left, top);
-        const p2 = pixelToFractal(left + width, top + height);
-
-        const newCenterX = p1.x.plus(p2.x).dividedBy(2);
-        const newCenterY = p1.y.plus(p2.y).dividedBy(2);
-
-        const fractalWidth = p2.x.minus(p1.x).abs();
-        const fractalHeight = p1.y.minus(p2.y).abs(); // p1.y is top, p2.y is bottom
-
-        const newActualWidth = fractalWidth.dividedBy(aspect >= 1 ? (2 * aspect) : 2);
-        const newActualHeight = fractalHeight.dividedBy(aspect >= 1 ? 2 : (2 / aspect));
-
-        const newR = Decimal.max(newActualWidth, newActualHeight);
-        const newZActual = new Decimal(1).dividedBy(newR);
-
-        if (newZActual.greaterThan(this.maxZ) || ! newZActual.isFinite()) return;
-
-        if (!this.zoomAnimationsEnabled) {
-            this.centerX = newCenterX;
-            this.centerY = newCenterY;
-            this.zActual = newZActual;
-            this.renderFractal();
-        } else {
-            const prevState = { centerX: this.centerX, centerY: this.centerY, zActual: this.zActual };
-            const targetState = { centerX: newCenterX, centerY: newCenterY, zActual: newZActual };
-            this.zoomStack.push({ prevState, targetState });
-            this.animateZoom(prevState, targetState);
-        }
-      }
-
-      animateZoom(fromState, toState) {
-        this.animating = true;
-        const zoom = toState.zActual.dividedBy(fromState.zActual);
-        const startTime = performance.now();
-
-        const animateFrame = now => {
-          let t = (now - startTime) / this.zoomDuration;
-          if (t > 1) t = 1;
-
-          const interpolatedZoomFactor = new Decimal(1).plus(new Decimal(t).times(zoom.minus(1)));
-          const factor = new Decimal(t).times(zoom).dividedBy(interpolatedZoomFactor);
-
-          // Linearly interpolate the center position based on the factor
-          this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
-          this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
-          this.zActual = fromState.zActual.times(interpolatedZoomFactor);
-
-          if (t === 1) {
-            this.animating = false;
-          }
-          this.renderFractal();
-          if (t < 1) {
-            requestAnimationFrame(animateFrame);
-          }
-        };
-
-        requestAnimationFrame(animateFrame);
-      }
-
-      zoomOut() {
-        if (this.animating) return;
-        if (!this.zoomAnimationsEnabled) {
-          this.zoomStack = [];
-        }    
-        if (this.zoomAnimationsEnabled && this.zoomStack.length > 0) {
-          const zoomEntry = this.zoomStack.pop();
-          this.animateZoom(zoomEntry.targetState, zoomEntry.prevState);
-        }
-        else {
-          this.z = this.z.dividedBy(this.zoomOutFactor);
-          this.renderFractal();        
-        }
-      }
-
-      reset() {
-        if (this.animating) return;
-        this.update (() => {
-          this.zoomStack = [];
-          this.z = this.prevZ = this.defaultZ;
-          this.centerX = this.defaultCenterX;
-          this.centerY = this.defaultCenterY;          
-          this.maxIter = this.maxIterDefault; 
-          this.zoomAnimationsEnabled = true;   
-        })
-        setTimeout (() => this.renderFractal(), 1);
-      }
-
-      saveImage() {
-        if (this.animating) return;
-        const dataURL = this.canvasEl.toDataURL("image/jpeg");
-        let filename = "mandelbrot_" +  location.search.slice(1) + ".jpeg";
-        const link = document.createElement("a");
-        link.href = dataURL;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-
-      view() {
-        return div(
-          canvas({
-            id: "mainCanvas",
-            width: this.canvasWidth,
-            height: this.canvasHeight,
-            onAttached: el => { this.canvasEl = el; }
-          }),
-          this.marquee.view({ id: "marqueeCanvas", width: this.canvasWidth, height: this.canvasHeight }),
-          this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
-          div({ class: "infoBox" },
-            h1({ class: "title" }, "Mandelbrot Explorer"),
-            div({ class: "controls" },
-              button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
-              button({ class: "controlButton", onclick: () => this.toggleAnimation() }, this.zoomAnimationsEnabled ? "Animated" : "Still"),
-              button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
-              button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out")
-            )
-          )
-        );
-      }
-    }
-
-    window.app = new App(MandelbrotExplorer, "app");
-  </script>
-</body>
+      window.app = new App(MandelbrotExplorer, "app");
+    </script>
+  </body>
 </html>
