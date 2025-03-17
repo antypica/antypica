@@ -375,13 +375,14 @@
             this.reset()
           }
           else {            
-            const x = this.centerX.toString();
-            const y =  this.centerY.toString();
-            const r = z.toString();
-
             try {
+              const x = this.centerX.toString();
+              const y =  this.centerY.toString();
+              const r = z.toString();
               this.rendering = true
-              await this.mandelbrotRenderer(this.canvasEl, x, y, r, this.maxIter, this.colorChoice, this.colorMax, { lowRes: this.animating });
+              const bitmap = await this.mandelbrotRenderer(this.canvasWidth, this.canvasHeight, x, y, r, this.maxIter, this.colorChoice, this.colorMax, { lowRes: this.animating });
+              const mainCtx = mainCanvas.getContext("2d");
+              mainCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
             }
             finally {
               this.rendering = false
@@ -485,7 +486,7 @@
         }
 
         reset() {
-          if (this.busy()) return;
+          this.animating = this.rendering = false;
           this.update(() => {
             this.zoomStack = [];
             this.z = this.prevZ = this.defaultZ;
@@ -614,9 +615,6 @@
 
         function ensureSize(canvas) {
           const { gl } = webglResources;
-          // For both HTMLCanvasElement and OffscreenCanvas, use width and height properties.
-          canvas.width = canvas.clientWidth || canvas.width;
-          canvas.height = canvas.clientHeight || canvas.height;
           gl.viewport(0, 0, canvas.width, canvas.height);
           const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
           webglResources.buffers = initBuffers(gl, canvas);
@@ -627,30 +625,35 @@
 
         /* ------------------ Async Helper ------------------ */
 
-        const runLast = (() => {
-          let runLock = false;
-          let pendingRun = null;
-          const runLastImp = (fn, ...args) => {
-            if (runLock) {
-              pendingRun = { fn, args };
-              return;
+        const takeLatest = (() => {
+          let running = false;
+          let pending = null;
+
+          return async function(fn, ...args) {
+            if (running) {              
+              pending = { fn, args, resolve: null, reject: null }; // Override any pending call with the latest one.
+              return new Promise((resolve, reject) => { pending.resolve = resolve; pending.reject = reject; });
             }
-            runLock = true;
+            running = true;
             try {
-              // Execute the provided function with the given arguments.
-              fn(...args);
-            } catch (e) {
-              console.error("Error in runLast function:", e);
-            }
-            runLock = false;
-            // If a pending call was queued, schedule it.
-            if (pendingRun) {
-              const { fn: nextFn, args: nextArgs } = pendingRun;
-              pendingRun = null;
-              setTimeout(() => runLastImp(nextFn, ...nextArgs), 0);
+              const result = await fn(...args);
+              running = false;              
+              if (pending) { // If a new call was queued while this one ran, process it.
+                const { fn: nextFn, args: nextArgs, resolve, reject } = pending;
+                pending = null;                
+                setTimeout(() => takeLatest(nextFn, ...nextArgs).then(resolve).catch(reject), 0); // Schedule the pending call after this call's stack unwinds.
+              }
+              return result;
+            } catch (error) {
+              running = false;
+              if (pending) {
+                const { fn: nextFn, args: nextArgs, resolve, reject } = pending;
+                pending = null;
+                setTimeout(() => takeLatest(nextFn, ...nextArgs).then(resolve).catch(reject), 0);
+              }
+              throw error;
             }
           };
-          return runLastImp;
         })();
 
         /* ------------------ Arithmetic Helpers ------------------ */
@@ -890,56 +893,6 @@
           return { position: positionBuffer };
         }
 
-        /*
-        * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
-        * Run with lower resolution than final image, to create mask applied to final image
-        */
-        function createMask(gl, programInfo, resWidth, resHeight) {
-          // Use a dedicated cache key for the mask canvas.
-          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
-          const offscreenContext = offscreenCanvas.getContext("2d");
-          const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-          const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
-
-          drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
-            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
-          });
-
-          // Copy WebGL image to a local image; reading pixels is slow so we use the offscreen canvas.
-          const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
-          gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
-          offscreenContext.putImageData(imageData, 0, 0);
-
-          const mask = new Uint8Array(resWidth * resHeight);
-          for (let y = 1; y < resHeight - 1; y++) {
-            for (let x = 1; x < resWidth - 1; x++) {
-              let allBlack = true;
-              // Only mask a pixel if it and all of its neighbours are black.
-              for (let j = -1; j <= 1 && allBlack; j++) { 
-                for (let i = -1; i <= 1; i++) {
-                  const idx = 4 * ((y + j) * resWidth + (x + i));
-                  if (!(pixelBuffer[idx] === 0 &&
-                      pixelBuffer[idx + 1] === 0 &&
-                      pixelBuffer[idx + 2] === 0 &&
-                      pixelBuffer[idx + 3] === 255)) {
-                    allBlack = false;
-                    break;
-                  }
-                }
-              }
-              mask[y * resWidth + x] = allBlack ? 255 : 0;
-            }
-          }
-
-          gl.deleteFramebuffer(heuristicFbo);
-          gl.deleteTexture(heuristicTex);
-
-          return { mask, width: resWidth, height: resHeight };
-        }
-
         /* ------------------ Orbit Calculation ------------------ */
         function createReferenceOrbit(mandelbrot_state) {
           const cx = mandelbrot_state.center[0],
@@ -997,9 +950,59 @@
           return [orbit, poly, polylim];
         }
 
+        /*
+        * createMask purpose is to avoid computing costly black pixels completely surrounded by other black pixels.
+        * Run with lower resolution than final image, to create mask applied to final image
+        */
+        function createMask(gl, programInfo, resWidth, resHeight) {
+          // Use a dedicated cache key for the mask canvas.
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
+          const offscreenContext = offscreenCanvas.getContext("2d");
+          const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+          const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+
+          drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
+            gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
+          });
+
+          // Copy WebGL image to a local image; reading pixels is slow so we use the offscreen canvas.
+          const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+          gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+          const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
+          offscreenContext.putImageData(imageData, 0, 0);
+
+          const mask = new Uint8Array(resWidth * resHeight);
+          for (let y = 1; y < resHeight - 1; y++) {
+            for (let x = 1; x < resWidth - 1; x++) {
+              let allBlack = true;
+              // Only mask a pixel if it and all of its neighbours are black.
+              for (let j = -1; j <= 1 && allBlack; j++) { 
+                for (let i = -1; i <= 1; i++) {
+                  const idx = 4 * ((y + j) * resWidth + (x + i));
+                  if (!(pixelBuffer[idx] === 0 &&
+                      pixelBuffer[idx + 1] === 0 &&
+                      pixelBuffer[idx + 2] === 0 &&
+                      pixelBuffer[idx + 3] === 255)) {
+                    allBlack = false;
+                    break;
+                  }
+                }
+              }
+              mask[y * resWidth + x] = allBlack ? 255 : 0;
+            }
+          }
+
+          gl.deleteFramebuffer(heuristicFbo);
+          gl.deleteTexture(heuristicTex);
+
+          return { mask, width: resWidth, height: resHeight };
+        }
+
         /* ------------------ Rendering Passes ------------------ */
-        function renderLowRes(gl, programInfo, canvas, scaleFactor) {
-          // Use canvas.width/height for OffscreenCanvas.
+        function renderLowRes(gl, programInfo, canvas, scaleFactor)
+        {
           const lowWidth = Math.floor(canvas.width / scaleFactor);
           const lowHeight = Math.floor(canvas.height / scaleFactor);
           const { mask } = createMask(gl, programInfo, lowWidth, lowHeight);
@@ -1041,12 +1044,13 @@
         }
 
         /**
-         * Renders the Mandelbrot set on the provided main canvas.
+         * Returns a Mandelbrot set as an ImageBitmap.
          *
-         * @param {HTMLCanvasElement} mainCanvas - The visible canvas element.
-         * @param {Decimal} x - The x-coordinate of the Mandelbrot center (must be a Decimal instance).
-         * @param {Decimal} y - The y-coordinate of the Mandelbrot center (must be a Decimal instance).
-         * @param {Decimal} r - The radius/zoom magnification for the Mandelbrot set calculation (must be a Decimal instance).
+         * @param {width} width - Pixel width.
+         * @param {height} width - Pixel height.
+         * @param {string} x - The x-coordinate of the Mandelbrot center.
+         * @param {string} y - The y-coordinate of the Mandelbrot center.
+         * @param {string} r - The radius/zoom magnification for the Mandelbrot set calculation.
          * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
          * @param {number} cmapscale - The scale factor applied to the color map for shading.
          * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
@@ -1054,16 +1058,11 @@
          * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
          * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
          *
-         * @returns {void}
+         * @returns {ImageBitmap}
          */
-        function render(mainCanvas, x, y, r, iterations, cmapscale, colorMax, options = {}) {
-          // Directly call the generalized cache function for the main render OffscreenCanvas.
-          const offscreenCanvas = getOrCreateOffscreenCanvasByKey(
-            'mainRender',
-            mainCanvas.clientWidth || mainCanvas.width,
-            mainCanvas.clientHeight || mainCanvas.height
-          );
-          // Fetch (or create) WebGL resources on the offscreen canvas.
+        function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {})
+        {          
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey ('mainRender', width, height);          
           const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
 
           const mandelbrot_state = {
@@ -1132,13 +1131,10 @@
           else
             renderHighRes(gl, programInfo, offscreenCanvas, options.scaleFactor || 3);
 
-          // After rendering to the offscreen canvas, transfer the result to the main canvas.
-          const bitmap = offscreenCanvas.transferToImageBitmap();
-          const mainCtx = mainCanvas.getContext("2d");
-          mainCtx.drawImage(bitmap, 0, 0, mainCanvas.clientWidth || mainCanvas.width, mainCanvas.clientHeight || mainCanvas.height);
+          return offscreenCanvas.transferToImageBitmap();          
         }
 
-        return (...args) => runLast(render, ...args);
+        return (...args) => takeLatest(render, ...args);
       }
 
       window.app = new App(MandelbrotExplorer, "app");
