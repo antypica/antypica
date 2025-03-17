@@ -453,6 +453,7 @@
             this.zActual = fromState.zActual.times(interpolatedZoomFactor);
 
             if (t === 1) {
+              this.renderFractal();
               this.animating = false;
             }
             this.renderFractal();
