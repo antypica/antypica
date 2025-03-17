@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Mandelbrot 1e300</title>
-    <meta name="description" content="Beautiful Mandelbrot Explorer for the web with 10^300 zoom depth, WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
+    <title>∞Mandelbrot Ex²plorer</title>
+    <meta name="description" content="Beautiful Mandelbrot Explorer for the web with infinite zoom depth (10^300), WebGL2 accelerated. Adapted to use Hastings Greer's amazing high depth algorithm, so check out his stuff on Mandelbrots." />
     <style>
       html, body {
         margin: 0;
@@ -523,7 +523,7 @@
             this.marquee.view({ id: "marqueeCanvas", width: this.canvasWidth, height: this.canvasHeight }),
             this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
             div({ class: "infoBox" },
-              h1({ class: "title" }, "Mandelbrot 1e300"),
+              h1({ class: "title" }, "∞Mandelbrot Ex²plorer"),
               div({ class: "controls" },                
                 button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
                 selector({target: this, prop : () => this.maxIter, options: this.iterationOptions, id: "maxIter" }),
