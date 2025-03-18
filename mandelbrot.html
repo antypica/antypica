@@ -510,8 +510,9 @@
         iterationOptions = [
           { label: "1K Anim.", value: 1000 },
           { label: "5K Anim.", value: 5000 },
+          { label: "10K Still", value: 10000 },
           { label: "20K Still", value: 20000 },
-          { label: "80K Still", value: 80000 },
+          { label: "50K Still", value: 50000 }
         ]
 
         view() {
@@ -753,122 +754,118 @@
 
         /* ------------------ Shader Sources ------------------ */
         const vsSource = `#version 300 es
-        in vec4 aVertexPosition;
-        uniform mat4 uModelViewMatrix;
-        uniform mat4 uProjectionMatrix;
-        out highp vec2 delta;
-        void main() {
-          gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-          delta = vec2(aVertexPosition[0], aVertexPosition[1]);
-        }
-        `;
+          in vec4 aVertexPosition;
+          uniform mat4 uModelViewMatrix;
+          uniform mat4 uProjectionMatrix;
+          out highp vec2 delta;
+          void main() {
+            gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+            delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+          }`;
+
         const fsSource = `#version 300 es
-        precision highp float;
-        in highp vec2 delta;
-        out vec4 fragColor;
-        uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
-        uniform float uColorMax;     // Fixed iteration count for colouring.
-        uniform bool uUseHeuristic;
-        uniform sampler2D uLowResMask;
-        uniform vec2 uLowResDim;
-        uniform vec2 uFinalDim;
-        uniform vec4 poly1;
-        uniform vec4 poly2;
-        uniform sampler2D sequence;
-        float get_orbit_x(int i) {
-          i = i * 3;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        float get_orbit_y(int i) {
-          i = i * 3 + 1;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        float get_orbit_scale(int i) {
-          i = i * 3 + 2;
-          int row = i / 1024;
-          return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
-        }
-        void main() {
-          if (uUseHeuristic) {
-            vec2 uv = gl_FragCoord.xy / uFinalDim;
-            if (texture(uLowResMask, uv).r > 0.5) {
-              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-              return;
-            }
+          precision highp float;
+          in highp vec2 delta;
+          out vec4 fragColor;
+          uniform vec4 uState;         // [center, cmapscale, base exponent, variable max iterations]
+          uniform float uColorMax;     // Fixed iteration count for colouring.
+          uniform bool uUseHeuristic;
+          uniform sampler2D uLowResMask;
+          uniform vec2 uLowResDim;
+          uniform vec2 uFinalDim;
+          uniform vec4 poly1;
+          uniform vec4 poly2;
+          uniform sampler2D sequence;
+          float get_orbit_x(int i) {
+            i = i * 3;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
           }
-          float q = uState[2] - 1.0;
-          float cq = q;
-          q = q + poly2[3];
-          float S = pow(2.0, q);
-          float dcx = delta[0];
-          float dcy = delta[1];
-          float x;
-          float y;
-          float sqrx = (dcx * dcx - dcy * dcy);
-          float sqry = (2.0 * dcx * dcy);
-          float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;      
-          float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
-          int k = int(poly2[2]);
-          int j = k;
-          x = get_orbit_x(k);
-          y = get_orbit_y(k);
-          for (int i = k; float(i) < uState[3]; i++) {
-            j++; k++;
-            float os = get_orbit_scale(k - 1);
-            dcx = delta[0] * pow(2.0, -q + cq - os);
-            dcy = delta[1] * pow(2.0, -q + cq - os);
-            float unS = pow(2.0, q - os);
-            if (isinf(unS)) unS = 0.0;
-            float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
-            dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
-            dx = tx;
-            q = q + os;
-            S = pow(2.0, q);
+          float get_orbit_y(int i) {
+            i = i * 3 + 1;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+          }
+          float get_orbit_scale(int i) {
+            i = i * 3 + 2;
+            int row = i / 1024;
+            return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+          }
+          void main() {
+            if (uUseHeuristic) {
+              vec2 uv = gl_FragCoord.xy / uFinalDim;
+              if (texture(uLowResMask, uv).r > 0.5) {
+                fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+              }
+            }
+            float q = uState[2] - 1.0;
+            float cq = q;
+            q = q + poly2[3];
+            float S = pow(2.0, q);
+            float dcx = delta[0];
+            float dcy = delta[1];
+            float x;
+            float y;
+            float sqrx = (dcx * dcx - dcy * dcy);
+            float sqry = (2.0 * dcx * dcy);
+            float dx = poly1[0] * dcx - poly1[1] * dcy + poly1[2] * sqrx - poly1[3] * sqry;      
+            float dy = poly1[0] * dcy + poly1[1] * dcx + poly1[2] * sqry + poly1[3] * sqrx;
+            int k = int(poly2[2]);
+            int j = k;
             x = get_orbit_x(k);
             y = get_orbit_y(k);
-            float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
-            float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
-            if (fx * fx + fy * fy > 4.0) break;
-            if (dx * dx + dy * dy > 1000000.0) {
-              dx /= 2.0;
-              dy /= 2.0;
-              q = q + 1.0;
+            for (int i = k; float(i) < uState[3]; i++) {
+              j++; k++;
+              float os = get_orbit_scale(k - 1);
+              dcx = delta[0] * pow(2.0, -q + cq - os);
+              dcy = delta[1] * pow(2.0, -q + cq - os);
+              float unS = pow(2.0, q - os);
+              if (isinf(unS)) unS = 0.0;
+              float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
+              dy = 2.0 * x * dy + 2.0 * y * dx + unS * 2.0 * dx * dy + dcy;
+              dx = tx;
+              q = q + os;
               S = pow(2.0, q);
-              dcx = delta[0] * pow(2.0, -q + cq);
-              dcy = delta[1] * pow(2.0, -q + cq);
+              x = get_orbit_x(k);
+              y = get_orbit_y(k);
+              float fx = x * pow(2.0, get_orbit_scale(k)) + S * dx;
+              float fy = y * pow(2.0, get_orbit_scale(k)) + S * dy;
+              if (fx * fx + fy * fy > 4.0) break;
+              if (dx * dx + dy * dy > 1000000.0) {
+                dx /= 2.0;
+                dy /= 2.0;
+                q = q + 1.0;
+                S = pow(2.0, q);
+                dcx = delta[0] * pow(2.0, -q + cq);
+                dcy = delta[1] * pow(2.0, -q + cq);
+              }
+              if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
+                dx = fx;
+                dy = fy;
+                q = 0.0;
+                S = pow(2.0, q);
+                dcx = delta[0] * pow(2.0, -q + cq);
+                dcy = delta[1] * pow(2.0, -q + cq);
+                k = 0;
+                x = get_orbit_x(0);
+                y = get_orbit_y(0);
+              }
             }
-            if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
-              dx = fx;
-              dy = fy;
-              q = 0.0;
-              S = pow(2.0, q);
-              dcx = delta[0] * pow(2.0, -q + cq);
-              dcy = delta[1] * pow(2.0, -q + cq);
-              k = 0;
-              x = get_orbit_x(0);
-              y = get_orbit_y(0);
+            float c_old = (uState[3] - float(j)) / uState[1];
+            vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
+            if (length(col_old) < 0.001) {
+              fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            } else {
+              float c_new = (uColorMax - float(j)) / uState[1];
+              vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
+              fragColor = vec4(col_new, 1.0);
             }
-          }
-          float c_old = (uState[3] - float(j)) / uState[1];
-          vec3 col_old = (vec3(cos(c_old), cos(1.1214 * c_old), cos(0.8 * c_old)) / -2.0) + 0.5;
-          if (length(col_old) < 0.001) {
-            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
-          } else {
-            float c_new = (uColorMax - float(j)) / uState[1];
-            vec3 col_new = (vec3(cos(c_new), cos(1.1214 * c_new), cos(0.8 * c_new)) / -2.0) + 0.5;
-            fragColor = vec4(col_new, 1.0);
-          }
-        }
-        `;
+          }`;
 
         /* ------------------ Layout and Buffer Helpers ------------------ */
         function computeLayoutAndMatrices(canvas) {
-          // Use canvas.width and canvas.height (OffscreenCanvas does not have clientWidth)
-          const width = canvas.width;
-          const height = canvas.height;
-          const aspect = width / height;
+          const aspect = canvas.width / canvas.height;
           const layout = aspect >= 1 ?
             [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
             [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
@@ -891,8 +888,7 @@
 
         /* ------------------ Orbit Calculation ------------------ */
         function createReferenceOrbit(mandelbrot_state) {
-          const cx = mandelbrot_state.center[0],
-            cy = mandelbrot_state.center[1];
+          const cx = mandelbrot_state.center[0], cy = mandelbrot_state.center[1];
           let x = mpfr_zero(), y = mpfr_zero();
           const orbit = new Float32Array(1024 * 1024);
           orbit.fill(-1);
@@ -946,12 +942,7 @@
           return [orbit, poly, polylim];
         }
 
-        /*
-        * createMask solves the issue of wasting time computing large areas of black pixels.
-        * It creates a lower resolution mask comprised of black pixels completely surrounded by
-        * other black pixels, to avoid recomputing those black pixels in the higher resolution image.
-        */
-        function createMask(gl, programInfo, resWidth, resHeight) {
+        function createMask(gl, programInfo, resWidth, resHeight, settings) {
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
           const offscreenContext = offscreenCanvas.getContext("2d");
           const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
@@ -961,21 +952,20 @@
             gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
           });
 
-          // Copy WebGL image to a local image.
           const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
           gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+          // this line is the slowest / most variable in performance, it crosses JS/WebGL2 boundary
           gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
           gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-          const imageData = new ImageData(new Uint8ClampedArray(pixelBuffer), resWidth, resHeight);
-          offscreenContext.putImageData(imageData, 0, 0);
 
+          const w = settings.foveaWidth, d = settings.foveaDetail;
           const mask = new Uint8Array(resWidth * resHeight);
-          for (let y = 1; y < resHeight - 1; y++) {
-            for (let x = 1; x < resWidth - 1; x++) {
+
+          for (let y = w; y < resHeight - w; y++) {
+            for (let x = w; x < resWidth - w; x++) {
               let allBlack = true;
-              // Only mask a pixel if it and all of its neighbours are black.
-              for (let j = -1; j <= 1 && allBlack; j++) {
-                for (let i = -1; i <= 1; i++) {
+              for (let j = -w; j <= w && allBlack; j += d) {
+                for (let i = -w; i <= w; i += d) {
                   const idx = 4 * ((y + j) * resWidth + (x + i));
                   if (!(pixelBuffer[idx] === 0 &&
                         pixelBuffer[idx + 1] === 0 &&
@@ -989,27 +979,28 @@
               mask[y * resWidth + x] = allBlack ? 255 : 0;
             }
           }
-
           gl.deleteFramebuffer(heuristicFbo);
           gl.deleteTexture(heuristicTex);
-
           return { mask, width: resWidth, height: resHeight };
         }
-        
-        function renderScaled(gl, programInfo, canvas, scaleFactor, isAnimation) {          
-          const targetWidth = Math.floor(canvas.width / scaleFactor);
-          const targetHeight = Math.floor(canvas.height / scaleFactor);          
-          const maskWidth = Math.floor(targetWidth / scaleFactor);
-          const maskHeight = Math.floor(targetHeight / scaleFactor);
 
-          // Generate mask and set up the corresponding texture.
-          const { mask } = createMask(gl, programInfo, maskWidth, maskHeight);
+        function renderScaled(gl, programInfo, canvas, scaleFactor, isAnimation)
+        {
+          // these settings balance accuracy & speed
+          const maskSettings = { active: 1, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 }; 
+
+          const targetWidth = Math.floor(canvas.width / scaleFactor);
+          const targetHeight = Math.floor(canvas.height / scaleFactor);
+          const maskWidth = Math.floor(targetWidth / maskSettings.scaleFactor);
+          const maskHeight = Math.floor(targetHeight / maskSettings.scaleFactor);
+          
+          const { mask } = createMask(gl, programInfo, maskWidth, maskHeight, maskSettings);
           const maskTex = createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
 
           if (isAnimation) {
             // Animation pass: draw directly to the canvas.
             drawPass(gl, null, canvas.width, canvas.height, () => {
-              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, maskSettings.active);
               gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
               gl.uniform2f(programInfo.uniformLocations.uLowResDim, targetWidth, targetHeight);
               gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.width, canvas.height);
@@ -1020,7 +1011,7 @@
             const finalFbo = createFramebufferForTexture(gl, finalTex);
             drawPass(gl, finalFbo, targetWidth, targetHeight, () => {
               gl.uniform2f(programInfo.uniformLocations.uFinalDim, targetWidth, targetHeight);
-              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 1);
+              gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, maskSettings.active);
               gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
             });
             gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
@@ -1039,7 +1030,7 @@
         }
 
         /**
-         * Returns a Mandelbrot set as a bitmp.
+         * Returns a Mandelbrot set as a bitmap.
          *
          * @param {number} width - Pixel width.
          * @param {number} height - Pixel height.
@@ -1055,10 +1046,10 @@
          *
          * @returns {ImageBitmap}
          */
-        function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {
-          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('mainRender', width, height);
+        function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {        
+          const offscreenCanvas = getOrCreateOffscreenCanvasByKey('mainRender', width, height);            
           const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
-
+        
           const mandelbrot_state = {
             center: [mpfr_zero(), mpfr_zero()],
             radius: mpfr_zero(),
@@ -1071,17 +1062,25 @@
               binding.mpfr_set_string(this.radius, r, 10, 0);
             }
           };
+          const tStateStart = performance.now();
           mandelbrot_state.set(x, y, r);
 
+          const tMatrixStart = performance.now();
           const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(offscreenCanvas);
+
           gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
           gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
           gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
           gl.useProgram(programInfo.program);
           gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
           gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+
+          const tOrbitStart = performance.now();
           const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
+
+          const tOrbitTextureStart = performance.now();
           createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
+
           const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
           const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
           gl.uniform4f(
@@ -1094,7 +1093,7 @@
           if (mandelbrot_state.colorMax !== undefined)
             gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
 
-          // Compute and update polynomial scaling here (if needed).
+          const tPolyStart = performance.now();
           const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
           const poly_scale = [1, -poly_scale_exp[1]];
           const poly_scaled = [
