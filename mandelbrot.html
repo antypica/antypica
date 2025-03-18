@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
   <head>
@@ -995,23 +996,6 @@
           return { mask, width: resWidth, height: resHeight };
         }
         
-        /**
-         * Returns a Mandelbrot set as a bitmp.
-         *
-         * @param {number} width - Pixel width.
-         * @param {number} height - Pixel height.
-         * @param {string} x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
-         * @param {string} y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
-         * @param {string} r - The arbitrary precision radius/zoom magnification for the Mandelbrot set calculation.
-         * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
-         * @param {number} cmapscale - The scale factor applied to the color map for shading.
-         * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
-         * @param {Object} [options={}] - Optional parameters for rendering.
-         * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
-         * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
-         *
-         * @returns {ImageBitmap}
-         */
         function renderScaled(gl, programInfo, canvas, scaleFactor, isAnimation) {          
           const targetWidth = Math.floor(canvas.width / scaleFactor);
           const targetHeight = Math.floor(canvas.height / scaleFactor);          
@@ -1054,6 +1038,23 @@
           gl.deleteTexture(maskTex);
         }
 
+        /**
+         * Returns a Mandelbrot set as a bitmp.
+         *
+         * @param {number} width - Pixel width.
+         * @param {number} height - Pixel height.
+         * @param {string} x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
+         * @param {string} y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
+         * @param {string} r - The arbitrary precision radius/zoom magnification for the Mandelbrot set calculation.
+         * @param {number} iterations - The maximum number of iterations used in the Mandelbrot computation.
+         * @param {number} cmapscale - The scale factor applied to the color map for shading.
+         * @param {number} colorMax - A fixed iteration count used solely for consistent coloring.
+         * @param {Object} [options={}] - Optional parameters for rendering.
+         * @param {boolean} [options.lowRes=false] - If true, renders using a lower res pass.
+         * @param {number} [options.scaleFactor=3] - The factor by which the resolution is reduced in resolution-specific passes.
+         *
+         * @returns {ImageBitmap}
+         */
         function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('mainRender', width, height);
           const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
