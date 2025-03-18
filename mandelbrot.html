@@ -66,6 +66,9 @@
         gap: 10px;
         justify-content: center;
       }
+      .title {
+        font-family: math;
+      }
       .controlButton, select {
         min-width: 120px;
         max-width: 120px;
@@ -547,7 +550,6 @@
        * - Works with fractional zoom levels, not only integer powers of two
        * - Works with any aspect ratio, automatically filling the available space
        * - Consistent colouring independent of max iterations
-       * - Caching & async handling
        */
 
       import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
@@ -942,6 +944,8 @@
           return [orbit, poly, polylim];
         }
 
+        // creates a mask in low resolution of black areas presumed not worth computing in
+        // higher resolution, as presumed to also be black
         function createMask(gl, programInfo, resWidth, resHeight, settings) {
           const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
           const offscreenContext = offscreenCanvas.getContext("2d");
