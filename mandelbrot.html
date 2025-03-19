@@ -114,7 +114,7 @@
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"/>
     <script type="module">
       import { App, Component, div, h1, button, selector, canvas } from "https://esm.sh/solenya";
       import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
@@ -548,11 +548,8 @@
         }        
       }
 
-      // --------------------------------------------------------
-      // Runs a worker with an async `main` function to be awaited
-      // for initialisation, returning a worker function that
-      // returns a `result` to the UI thread
-
+      /* Runs a worker with an async `main` function to be awaited for initialisation
+         returning a worker function that returns a result to the UI thread. */
       async function createWorker(workerCode) {
         workerCode+=
           `const initWorker = async (initWorker) => {
@@ -610,35 +607,57 @@
           });
         };
       }
-
-      // ------------------------------------------
-
-      /*
-       * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
-       *     
-       * - Calculates in low resolution before high resolution, enabling:
-       *   - Creating a mask to skip unnecessary calculations
-       *   - Animations with reduced resolution
-       * - Works with fractional zoom levels, not only integer powers of two
-       * - Works with any aspect ratio, automatically filling the available space
-       * - Consistent colouring independent of max iterations
-       * - Renders asynchronously on an OffscreenCanvas, so can be called as a web worker.
-       * - Stateless render w/ cached lookups
-       */
-       
+      
       const workerCode = `
 import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
 import { init } from "https://cdn.skypack.dev/gmp-wasm";
 
-async function main() {
+export async function main() {
   const { binding } = await init(); // Loads the MPFR binding
 
-  /* ------------------ Global OffscreenCanvas Cache ------------------ */
+  /* ------------------ Utilities------------------ */
+  
+  function uniforms(gl, program, definitions) {
+    const uniformsMap = {};
+    definitions.forEach(({ name, type }) => {
+      const location = gl.getUniformLocation(program, name);
+      if (location === null) {
+        console.warn("Uniform " + name + " not found in the shader.");
+      }
+      uniformsMap[name] = { location, type, value: undefined };
+    });
+    function applyUniform(name, value) {
+      const { location, type } = uniformsMap[name];
+      if (!location) return;
+      switch (type) {
+        case "1f": gl.uniform1f(location, value); break;
+        case "1i": gl.uniform1i(location, value); break;
+        case "2f": gl.uniform2f(location, value[0], value[1]); break;
+        case "3f": gl.uniform3f(location, value[0], value[1], value[2]); break;
+        case "4f": gl.uniform4f(location, value[0], value[1], value[2], value[3]); break;
+        case "Matrix4fv": gl.uniformMatrix4fv(location, false, value); break;
+        default: console.error("Uniform type " + type + " not implemented.");
+      }
+    }
+    return new Proxy({}, {
+      get(target, prop) {
+        return prop in uniformsMap ? uniformsMap[prop].value : undefined;
+      },
+      set(target, prop, value) {
+        if (prop in uniformsMap) {
+          uniformsMap[prop].value = value;
+          applyUniform(prop, value);
+          return true;
+        }
+        target[prop] = value;
+        return true;
+      }
+    });
+  }
+  
   const offscreenCanvasCache = new Map();
 
   function getOrCreateOffscreenCanvasByKey(key, width, height) {
-    width = Number(width);
-    height = Number(height);
     const cached = offscreenCanvasCache.get(key);
     if (cached && cached.width === width && cached.height === height) {
       return cached;
@@ -648,53 +667,6 @@ async function main() {
     return canvas;
   }
 
-  /* ------------------ WebGL Resource Initialization and Caching ------------------ */
-  let webglResources = null;
-
-  // Modified to take a canvas parameter (which can be offscreen)
-  function fetchWebGLResources(canvas) {
-    if (webglResources && webglResources.canvas === canvas) {
-      ensureSize(canvas);
-      return webglResources;
-    }
-    const gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
-    if (!gl) throw new Error("WebGL2 not supported.");
-    const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
-    const programInfo = {
-      program: shaderProgram,
-      attribLocations: {
-        vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
-      },
-      uniformLocations: {
-        projectionMatrix: gl.getUniformLocation(shaderProgram, "uProjectionMatrix"),
-        modelViewMatrix: gl.getUniformLocation(shaderProgram, "uModelViewMatrix"),
-        uUseHeuristic: gl.getUniformLocation(shaderProgram, "uUseHeuristic"),
-        uLowResMask: gl.getUniformLocation(shaderProgram, "uLowResMask"),
-        uLowResDim: gl.getUniformLocation(shaderProgram, "uLowResDim"),
-        uFinalDim: gl.getUniformLocation(shaderProgram, "uFinalDim"),
-        state: gl.getUniformLocation(shaderProgram, "uState"),
-        colorMax: gl.getUniformLocation(shaderProgram, "uColorMax"),
-        poly1: gl.getUniformLocation(shaderProgram, "poly1"),
-        poly2: gl.getUniformLocation(shaderProgram, "poly2"),
-        sequence: gl.getUniformLocation(shaderProgram, "sequence")
-      }
-    };
-    const buffers = initBuffers(gl, canvas);
-    webglResources = { gl, programInfo, buffers, canvas };
-    return webglResources;
-  }
-
-  function ensureSize(canvas) {
-    const { gl } = webglResources;
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(canvas);
-    webglResources.buffers = initBuffers(gl, canvas);
-    gl.useProgram(webglResources.programInfo.program);
-    gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
-    gl.uniformMatrix4fv(webglResources.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
-  }
-
-  /* ------------------ Async Helpers ------------------ */
   const takeLatest = (() => {
     let running = false;
     let pending = null;
@@ -725,7 +697,6 @@ async function main() {
     };
   })();
 
-  /* ------------------ Arithmetic Helpers ------------------ */
   function mpfr_zero() {
     const zero = binding.mpfr_t();
     binding.mpfr_init2(zero, 1200);
@@ -775,7 +746,6 @@ async function main() {
     return Math.pow(2, d[1]) * d[0];
   }
 
-  /* ------------------ WebGL Helpers ------------------ */
   function loadShader(gl, type, source) {
     const shader = gl.createShader(type);
     gl.shaderSource(shader, source);
@@ -784,6 +754,7 @@ async function main() {
       throw new Error("Error compiling shader: " + gl.getShaderInfoLog(shader));
     return shader;
   }
+
   function initShaderProgram(gl, vsSource, fsSource) {
     const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
     const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
@@ -795,6 +766,7 @@ async function main() {
       throw new Error("Unable to initialize shader program: " + gl.getProgramInfoLog(shaderProgram));
     return shaderProgram;
   }
+
   function createAndSetupTexture(gl, unit, width, height, internalFormat, format, type, data = null) {
     const tex = gl.createTexture();
     gl.activeTexture(gl.TEXTURE0 + unit);
@@ -805,6 +777,7 @@ async function main() {
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
     return tex;
   }
+
   function createFramebufferForTexture(gl, tex) {
     const fbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
@@ -813,6 +786,7 @@ async function main() {
       throw new Error("Framebuffer not complete.");
     return fbo;
   }
+
   function drawPass(gl, framebuffer, width, height, setUniforms) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.viewport(0, 0, width, height);
@@ -822,6 +796,81 @@ async function main() {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.finish();
+  }
+
+  function blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex) {
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, framebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.blitFramebuffer(
+      0, 0, targetWidth, targetHeight,
+      0, 0, canvas.width, canvas.height,
+      gl.COLOR_BUFFER_BIT, gl.NEAREST
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(framebuffer);
+    gl.deleteTexture(finalTex);
+  }
+
+  /* ------------------ Mandelbrot Rendering  ------------------ */
+
+  let webglResources = null;
+
+  function getLayout(width, height) {
+    const aspect = width / height;
+    const right = Math.max(aspect, 1);
+    const top = Math.max(1, 1 / aspect);
+    return { left: -right, right, top, bottom: -top };
+  }
+  
+  function fetchWebGLResources(canvas) {
+    let gl, programInfo;
+    if (webglResources && webglResources.canvas === canvas) {
+      gl = webglResources.gl;
+      programInfo = webglResources.programInfo;
+    }
+    else {
+      gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+      if (!gl)
+        throw new Error("WebGL2 not supported.");
+
+      const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+      gl.useProgram(shaderProgram);
+      programInfo = {
+        program: shaderProgram,
+        attribLocations: { vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition") },
+        uniforms: uniforms(gl, shaderProgram, [
+          { name: "uProjectionMatrix", type: "Matrix4fv" },
+          { name: "uModelViewMatrix", type: "Matrix4fv" },
+          { name: "uState", type: "4f" },
+          { name: "uColorMax", type: "1f" },
+          { name: "uUseHeuristic", type: "1i" },
+          { name: "uLowResMask", type: "1i" },
+          { name: "uFinalDim", type: "2f" },
+          { name: "poly1", type: "4f" },
+          { name: "poly2", type: "4f" },
+          { name: "sequence", type: "1i" }
+        ])
+      };
+
+    }
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    const rect = getLayout(canvas.width, canvas.height);    
+    const projectionMatrix = mat4.create();
+    mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
+    const modelViewMatrix = mat4.create();
+
+    gl.useProgram(programInfo.program);
+    programInfo.uniforms.uProjectionMatrix = projectionMatrix;
+    programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const layout = [rect.right, rect.top, rect.left, rect.top, rect.right, rect.bottom, rect.left, rect.bottom];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
+    const buffers = { position: positionBuffer };
+
+    webglResources = { gl, programInfo, buffers, canvas };
+    return webglResources;
   }
 
   /* ------------------ Shader Sources ------------------ */
@@ -843,7 +892,6 @@ uniform vec4 uState;
 uniform float uColorMax;
 uniform bool uUseHeuristic;
 uniform sampler2D uLowResMask;
-uniform vec2 uLowResDim;
 uniform vec2 uFinalDim;
 uniform vec4 poly1;
 uniform vec4 poly2;
@@ -935,30 +983,6 @@ void main() {
   }
 }\`;
 
-  /* ------------------ Layout and Buffer Helpers ------------------ */
-  function computeLayoutAndMatrices(canvas) {
-    const aspect = canvas.width / canvas.height;
-    const layout = aspect >= 1 ?
-      [aspect, 1.0, -aspect, 1.0, aspect, -1.0, -aspect, -1.0] :
-      [1.0, 1.0 / aspect, -1.0, 1.0 / aspect, 1.0, -1.0 / aspect, -1.0, -1.0 / aspect];
-    const projectionMatrix = mat4.create();
-    if (aspect >= 1)
-      mat4.ortho(projectionMatrix, -aspect, aspect, -1, 1, -1, 1);
-    else
-      mat4.ortho(projectionMatrix, -1, 1, -1 / aspect, 1 / aspect, -1, 1);
-    const modelViewMatrix = mat4.create();
-    return { layout, projectionMatrix, modelViewMatrix };
-  }
-
-  function initBuffers(gl, canvas) {
-    const { layout } = computeLayoutAndMatrices(canvas);
-    const positionBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
-    return { position: positionBuffer };
-  }
-
-  /* ------------------ Orbit Calculation ------------------ */
   function createReferenceOrbit(mandelbrot_state) {
     const cx = mandelbrot_state.center[0], cy = mandelbrot_state.center[1];
     let x = mpfr_zero(), y = mpfr_zero();
@@ -1014,22 +1038,26 @@ void main() {
     return [orbit, poly, polylim];
   }
 
-  // creates a mask in low resolution of black areas presumed not worth computing in
-  // higher resolution, as presumed to also be black
-  function createMask(gl, programInfo, resWidth, resHeight, settings) {
-    const offscreenCanvas = getOrCreateOffscreenCanvasByKey('maskRender', resWidth, resHeight);
-    const offscreenContext = offscreenCanvas.getContext("2d");
+  /* creates a mask in low resolution of black pixels presumed not worth computing in higher resolution, as also presumed to be black */
+  function createMask(gl, programInfo, resWidth, resHeight, settings)
+  {    
     const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
     const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+
     drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
-      gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, 0);
+      programInfo.uniforms.uUseHeuristic = 0;
     });
     const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+
+    // readPixels is costly; crosses the JS/WebGL2 boundary. trade-off is render will be marginally slower on
+    // regions with few black pixels, but far faster on regions with many black pixels. tried pushing
+    // this into a WebGL2 shader, but ironically performance was actually worse
     gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     const w = settings.foveaWidth, d = settings.foveaDetail;
     const mask = new Uint8Array(resWidth * resHeight);
+
     for (let y = w; y < resHeight - w; y++) {
       for (let x = w; x < resWidth - w; x++) {
         let allBlack = true;
@@ -1053,47 +1081,36 @@ void main() {
     return { mask, width: resWidth, height: resHeight };
   }
 
-  function renderScaled(gl, programInfo, canvas, scaleFactor, isAnimation) {
+  function renderScaled(gl, programInfo, canvas, scaleFactor, isLowRes) {    
+    // maskSettings: optimal blend of accuracy and performance
     const maskSettings = { active: 1, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
+  
     const targetWidth = Math.floor(canvas.width / scaleFactor);
     const targetHeight = Math.floor(canvas.height / scaleFactor);
     const maskWidth = Math.floor(targetWidth / maskSettings.scaleFactor);
     const maskHeight = Math.floor(targetHeight / maskSettings.scaleFactor);
+    const drawWidth = isLowRes ? canvas.width : targetWidth;
+    const drawHeight = isLowRes ? canvas.height : targetHeight;
+        
     const { mask } = createMask(gl, programInfo, maskWidth, maskHeight, maskSettings);
-    const maskTex = createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
-    if (isAnimation) {
-      drawPass(gl, null, canvas.width, canvas.height, () => {
-        gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, maskSettings.active);
-        gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-        gl.uniform2f(programInfo.uniformLocations.uLowResDim, targetWidth, targetHeight);
-        gl.uniform2f(programInfo.uniformLocations.uFinalDim, canvas.width, canvas.height);
-      });
-    } else {
-      const finalTex = createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-      const finalFbo = createFramebufferForTexture(gl, finalTex);
-      drawPass(gl, finalFbo, targetWidth, targetHeight, () => {
-        gl.uniform2f(programInfo.uniformLocations.uFinalDim, targetWidth, targetHeight);
-        gl.uniform1i(programInfo.uniformLocations.uUseHeuristic, maskSettings.active);
-        gl.uniform1i(programInfo.uniformLocations.uLowResMask, 2);
-      });
-      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, finalFbo);
-      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.blitFramebuffer(
-        0, 0, targetWidth, targetHeight,
-        0, 0, canvas.width, canvas.height,
-        gl.COLOR_BUFFER_BIT, gl.NEAREST
-      );
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.deleteFramebuffer(finalFbo);
-      gl.deleteTexture(finalTex);
+    createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+  
+    const finalTex =  isLowRes ? null : createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+    const framebuffer = isLowRes ? null : createFramebufferForTexture(gl, finalTex);
+    
+    drawPass(gl, framebuffer, drawWidth, drawHeight, () => {
+        programInfo.uniforms.uUseHeuristic = maskSettings.active;
+        programInfo.uniforms.uLowResMask = 2;
+        programInfo.uniforms.uFinalDim = [drawWidth, drawHeight];
+    });
+  
+    if (!isLowRes) {
+        blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex);
     }
-    gl.deleteTexture(maskTex);
   }
-
+  
   /**
    * Returns a Mandelbrot set as a bitmap.
-   *
    * @param {number} width - Pixel width.
    * @param {number} height - Pixel height.
    * @param {string} x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
@@ -1122,26 +1139,26 @@ void main() {
       }
     };
     mandelbrot_state.set(x, y, r);
-    const { projectionMatrix, modelViewMatrix } = computeLayoutAndMatrices(offscreenCanvas);
+    
     gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
     gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
     gl.useProgram(programInfo.program);
-    gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
-    gl.uniformMatrix4fv(programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+    
     const [orbit, poly, polylim] = createReferenceOrbit(mandelbrot_state);
     createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));
     const rexp = binding.mpfr_get_exp(mandelbrot_state.radius);
     const r_val = binding.mpfr_get_d_2exp(0, mandelbrot_state.radius, 0);
-    gl.uniform4f(
-      programInfo.uniformLocations.state,
+    
+    programInfo.uniforms.uState = [
       mandelbrot_state.center[0],
       mandelbrot_state.cmapscale,
       1 + get_exp(mandelbrot_state.radius),
       mandelbrot_state.iterations
-    );
+    ];
+
     if (mandelbrot_state.colorMax !== undefined)
-      gl.uniform1f(programInfo.uniformLocations.colorMax, mandelbrot_state.colorMax);
+      programInfo.uniforms.uColorMax = mandelbrot_state.colorMax;
     const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
     const poly_scale = [1, -poly_scale_exp[1]];
     const poly_scaled = [
@@ -1152,16 +1169,17 @@ void main() {
       mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
       mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
     ].map(floaty);
-    gl.uniform4f(programInfo.uniformLocations.poly1, poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]);
-    gl.uniform4f(programInfo.uniformLocations.poly2, poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]);
+    programInfo.uniforms.poly1 = [poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]];
+    programInfo.uniforms.poly2 = [poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]];
+
     renderScaled(gl, programInfo, offscreenCanvas, options.scaleFactor || 3, !options.lowRes);
+
     return offscreenCanvas.transferToImageBitmap();
   }
 
   return (...args) => takeLatest(render, ...args);
-}
-`;
-
+};
+`;        
       const createMandelbrotRenderer = async () => await createWorker(workerCode);
       window.app = new App(MandelbrotExplorer, "app");
 
