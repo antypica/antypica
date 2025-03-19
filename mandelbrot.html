@@ -1081,7 +1081,7 @@ void main() {
     return { mask, width: resWidth, height: resHeight };
   }
 
-  function renderScaled(gl, programInfo, canvas, scaleFactor, isLowRes) {    
+  function renderScaled(gl, programInfo, canvas, scaleFactor) {        
     // maskSettings: optimal blend of accuracy and performance
     const maskSettings = { active: 1, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
   
@@ -1089,23 +1089,22 @@ void main() {
     const targetHeight = Math.floor(canvas.height / scaleFactor);
     const maskWidth = Math.floor(targetWidth / maskSettings.scaleFactor);
     const maskHeight = Math.floor(targetHeight / maskSettings.scaleFactor);
-    const drawWidth = isLowRes ? canvas.width : targetWidth;
-    const drawHeight = isLowRes ? canvas.height : targetHeight;
         
     const { mask } = createMask(gl, programInfo, maskWidth, maskHeight, maskSettings);
     createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
   
-    const finalTex =  isLowRes ? null : createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-    const framebuffer = isLowRes ? null : createFramebufferForTexture(gl, finalTex);
+    const isLowRes = scaleFactor !== 1;
+    const finalTex = isLowRes ? createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE) : null;
+    const framebuffer = isLowRes ? createFramebufferForTexture(gl, finalTex) : null;
     
-    drawPass(gl, framebuffer, drawWidth, drawHeight, () => {
-        programInfo.uniforms.uUseHeuristic = maskSettings.active;
-        programInfo.uniforms.uLowResMask = 2;
-        programInfo.uniforms.uFinalDim = [drawWidth, drawHeight];
+    drawPass(gl, framebuffer, targetWidth, targetHeight, () => {
+      programInfo.uniforms.uUseHeuristic = maskSettings.active;
+      programInfo.uniforms.uLowResMask = 2;
+      programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];
     });
   
-    if (!isLowRes) {
-        blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex);
+    if (isLowRes) {
+      blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex);
     }
   }
   
@@ -1120,6 +1119,8 @@ void main() {
    * @param {number} cmapscale - Color map scale factor.
    * @param {number} colorMax - Fixed iteration count for coloring.
    * @param {Object} [options={}] - Optional rendering parameters.
+   * @param {boolean} [options.lowRes=false] - Render in low resolution if true; full resolution if false.
+   * @param {number} [options.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
    * @returns {ImageBitmap}
    */
   function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {        
@@ -1159,6 +1160,7 @@ void main() {
 
     if (mandelbrot_state.colorMax !== undefined)
       programInfo.uniforms.uColorMax = mandelbrot_state.colorMax;
+
     const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
     const poly_scale = [1, -poly_scale_exp[1]];
     const poly_scaled = [
@@ -1172,7 +1174,7 @@ void main() {
     programInfo.uniforms.poly1 = [poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]];
     programInfo.uniforms.poly2 = [poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]];
 
-    renderScaled(gl, programInfo, offscreenCanvas, options.scaleFactor || 3, !options.lowRes);
+    renderScaled(gl, programInfo, offscreenCanvas, ! options.lowRes ? 1 : (options.scaleFactor || 3));
 
     return offscreenCanvas.transferToImageBitmap();
   }
