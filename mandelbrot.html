@@ -93,6 +93,9 @@
       select {
         padding: 0 0 0 20px;
       }
+      select:focus {
+        background-color: #333;
+      }
       .tipOverlay {
         position: absolute;
         top: 50%;
@@ -354,7 +357,9 @@
         updated(payload) {
           if (payload.key == "maxIter") {
             this.renderFractal();
+            document.getElementById('maxIter').blur();            
           }    
+          document.querySelectorAll('button').forEach(b => b.blur());
           document.getElementById("maxIter").value = this.maxIter; // hack for weird databinding issue.
         }
 
@@ -517,7 +522,7 @@
           { label: "5K Anim.", value: 5000 },
           { label: "10K Still", value: 10000 },
           { label: "20K Still", value: 20000 },
-          { label: "50K Still", value: 50000 }
+          { label: "50K 💀", value: 50000 }
         ]
 
         view() {
