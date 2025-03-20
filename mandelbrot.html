@@ -79,16 +79,13 @@
         border-radius: 4px;
         cursor: pointer;
         white-space: nowrap;
-        transition: background 0.2s, color 0.2s;
+        transition: background 0.2s, color 0.2s;    
       }
       .controlButton:hover,
       .controlButton:active {
         color: rgba(255,255,255,1);
         border-color: rgba(255,255,255,1);
         background: rgba(70,70,70,0.8);
-      }
-      .controlButton:focus {
-        outline: none;
       }
       select {
         padding: 0 0 0 20px;
@@ -142,6 +139,14 @@
 
       function clearCanvas(canvasEl) {
         canvasEl.getContext("2d").clearRect(0, 0, canvasEl.width, canvasEl.height);
+      }
+
+      function controlButton(...values) {
+        return button({ class: "controlButton" }, ...values);
+      }
+
+      function focusHack () {
+        setTimeout (() => document.querySelectorAll('button').forEach(b => { b.blur()}), 50);
       }
 
       class Tip extends Component {
@@ -305,7 +310,8 @@
           this.mandelbrotRenderer = await createMandelbrotRenderer();
           this.marquee.onStart = () => this.tip.show();
           this.marquee.onEnd = rect => this.processMarquee(rect);
-          this.updateLayout(() => this.initFromURL());
+          this.updateLayout(() => this.initFromURL());           
+          marqueeCanvas.addEventListener("touchstart", () => focusHack());
         }
 
         updateLayout(afterLayout) {
@@ -357,9 +363,8 @@
         updated(payload) {
           if (payload.key == "maxIter") {
             this.renderFractal();
-            document.getElementById('maxIter').blur();            
-          }    
-          document.querySelectorAll('button').forEach(b => b.blur());
+            document.getElementById("maxIter").blur()
+          }              
           document.getElementById("maxIter").value = this.maxIter; // hack for weird databinding issue.
         }
 
@@ -394,7 +399,7 @@
             }
 
             if (!this.animating) {
-              this.updateURL();
+              this.updateURL();              
             }
           }
         }
@@ -535,10 +540,10 @@
             div({ class: "infoBox" },
               h1({ class: "title" }, "∞Mandelbrot Ex²plorer"),
               div({ class: "controls" },                
-                button({ class: "controlButton", onclick: () => this.saveImage() }, "Snapshot"),
+                controlButton({ onclick: () => this.saveImage() }, "Snapshot"),
                 selector({target: this, prop : () => this.maxIter, options: this.iterationOptions, id: "maxIter" }),
-                button({ class: "controlButton", onclick: () => this.reset() }, "Reset"),
-                button({ class: "controlButton", onclick: () => this.zoomOut() }, "Zoom Out")
+                controlButton({ onclick: () => this.reset() }, "Reset"),
+                controlButton({ onclick: () => this.zoomOut() }, "Zoom Out")
               )
             )
           );
