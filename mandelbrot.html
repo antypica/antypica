@@ -605,9 +605,14 @@
         };
       }      
 
-      const inlineWorkerCode = true;
-      const workerCode = ! inlineWorkerCode ? await (await fetch("worker.js")).text() :
-`
+      // -----------------App Launch-------------------------
+
+      const useInlineWorkerCode = true;
+      const workerCode = useInlineWorkerCode ? getInlineWorkerCode() : await (await fetch("worker.js")).text();
+      const createMandelbrotRenderer = async () => await createWorker(workerCode);
+      window.app = new App(MandelbrotExplorer, "app");
+      
+      function getInlineWorkerCode() { return `
 /* ------------------------------------------------------------------------------------------
 * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
 *     
@@ -1197,10 +1202,7 @@ void main() {
 
   return (...args) => takeLatest(render, ...args);
 };
-`;        
-      const createMandelbrotRenderer = async () => await createWorker(workerCode);
-      window.app = new App(MandelbrotExplorer, "app");
-
+`;}
     </script>
   </body>
 </html>
