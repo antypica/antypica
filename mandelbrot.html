@@ -286,9 +286,9 @@
         tip = new Tip();
         marquee = new Marquee();
         mandelbrotRenderer = undefined;
-
+        
         get zActual () { return this.z.times(this.pleasantCanvasRatio); }
-        set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }
+        set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }        
 
         get zoomAnimationsEnabled () { return this.maxIter <= 5000 }
 
@@ -371,11 +371,11 @@
             Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum
             this.prevZ = this.z
           }
-
-          const z = new Decimal(1).dividedBy(this.zActual)
+          
           if (zoomingOut && this.z.lessThan(this.defaultZ.add(0.01))) { // we've hit rock bottom, reset defaults
             this.reset()
           }
+          
           else {            
             try {
               if (this.rendering && this.animating)              
@@ -383,7 +383,7 @@
               
               const x = this.centerX.toString();
               const y =  this.centerY.toString();
-              const r = z.toString();              
+              const r = new Decimal(1).dividedBy(this.zActual).toString();              
               this.rendering = true
               const bitmap = await this.mandelbrotRenderer(this.canvasWidth, this.canvasHeight, x, y, r, this.maxIter, this.colorChoice, this.colorMax, { lowRes: this.animating });
               const mainCtx = mainCanvas.getContext("2d");
@@ -492,9 +492,6 @@
         }
 
         reset() {       
-          if (this.busy())
-            return;
-
           this.update(() => {
             this.zoomStack = [];
             this.z = this.prevZ = this.defaultZ;
@@ -621,7 +618,9 @@
       * - Stateless render w/ cached lookups
       */
 
-      const workerCode = `
+      const inlineWorkerCode = true;
+      const workerCode = ! inlineWorkerCode ? await (await fetch("worker.js")).text() :
+`
 import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
 import { init } from "https://cdn.skypack.dev/gmp-wasm";
 
