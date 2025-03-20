@@ -603,24 +603,24 @@
             worker.postMessage({ id, args });
           });
         };
-      }
-      
-      /* ------------------------------------------------------------------------------------------
-      * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
-      *     
-      * - Calculates in low resolution before high resolution, enabling:
-      *   - Creating a mask to skip unnecessary calculations
-      *   - Animations with reduced resolution
-      * - Works with fractional zoom levels, not only integer powers of two
-      * - Works with any aspect ratio, automatically filling the available space
-      * - Consistent colouring independent of max iterations
-      * - Renders asynchronously on an OffscreenCanvas, so can be called as a web worker.
-      * - Stateless render w/ cached lookups
-      */
+      }      
 
       const inlineWorkerCode = true;
       const workerCode = ! inlineWorkerCode ? await (await fetch("worker.js")).text() :
 `
+/* ------------------------------------------------------------------------------------------
+* Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
+*     
+* - Calculates in low resolution before high resolution, enabling:
+*   - Creating a mask to skip unnecessary calculations
+*   - Animations with reduced resolution
+* - Works with fractional zoom levels, not only integer powers of two
+* - Works with any aspect ratio, automatically filling the available space
+* - Consistent colouring independent of max iterations
+* - Renders asynchronously on an OffscreenCanvas, so can be called as a web worker.
+* - Stateless render w/ cached lookups
+*/
+
 import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
 import { init } from "https://cdn.skypack.dev/gmp-wasm";
 
@@ -857,11 +857,12 @@ export async function main() {
           { name: "uState", type: "4f" },
           { name: "uColorMax", type: "1f" },
           { name: "uUseHeuristic", type: "1i" },
+          { name: "uMaskTestSeeSkippedPixels", type: "1i" },
           { name: "uLowResMask", type: "1i" },
           { name: "uFinalDim", type: "2f" },
           { name: "poly1", type: "4f" },
           { name: "poly2", type: "4f" },
-          { name: "sequence", type: "1i" }
+          { name: "sequence", type: "1i" }          
         ])
       };
 
@@ -903,6 +904,7 @@ out vec4 fragColor;
 uniform vec4 uState;
 uniform float uColorMax;
 uniform bool uUseHeuristic;
+uniform bool uMaskTestSeeSkippedPixels;
 uniform sampler2D uLowResMask;
 uniform vec2 uFinalDim;
 uniform vec4 poly1;
@@ -927,7 +929,7 @@ void main() {
   if (uUseHeuristic) {
     vec2 uv = gl_FragCoord.xy / uFinalDim;
     if (texture(uLowResMask, uv).r > 0.5) {
-      fragColor = vec4(0.0, 0.0, 0.0, 1.0);
+      fragColor = vec4(uMaskTestSeeSkippedPixels ? 1.0 : 0.0, 0.0, 0.0, 1.0);
       return;
     }
   }
@@ -1095,7 +1097,8 @@ void main() {
 
   function renderScaled(gl, programInfo, canvas, scaleFactor) {        
     // maskSettings: optimal blend of accuracy and performance
-    const maskSettings = { active: 1, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
+    // set testSeeSkippedPixels to 1 to see effect
+    const maskSettings = { active: 1, testSeeSkippedPixels: 0, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
   
     const targetWidth = Math.floor(canvas.width / scaleFactor);
     const targetHeight = Math.floor(canvas.height / scaleFactor);
@@ -1111,8 +1114,9 @@ void main() {
     
     drawPass(gl, framebuffer, targetWidth, targetHeight, () => {
       programInfo.uniforms.uUseHeuristic = maskSettings.active;
+      programInfo.uniforms.uMaskTestSeeSkippedPixels = maskSettings.testSeeSkippedPixels;
       programInfo.uniforms.uLowResMask = 2;
-      programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];
+      programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];      
     });
   
     if (isLowRes) {
