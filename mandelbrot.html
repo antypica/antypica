@@ -311,7 +311,7 @@
           this.marquee.onStart = () => this.tip.show();
           this.marquee.onEnd = rect => this.processMarquee(rect);
           this.updateLayout(() => this.initFromURL());           
-          marqueeCanvas.addEventListener("touchstart", () => focusHack());
+          marqueeCanvas.addEventListener("pointerdown", () => focusHack());
         }
 
         updateLayout(afterLayout) {
