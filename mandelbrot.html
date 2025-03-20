@@ -108,6 +108,10 @@
         border-radius: 4px;
         transition: opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
       }
+      :focus:not(:focus-visible) {
+        outline: 0;
+        box-shadow: none;
+      }
     </style>
   </head>
   <body>
@@ -143,10 +147,6 @@
 
       function controlButton(...values) {
         return button({ class: "controlButton" }, ...values);
-      }
-
-      function focusHack () {
-        setTimeout (() => document.querySelectorAll('button').forEach(b => { b.blur()}), 50);
       }
 
       class Tip extends Component {
@@ -310,8 +310,7 @@
           this.mandelbrotRenderer = await createMandelbrotRenderer();
           this.marquee.onStart = () => this.tip.show();
           this.marquee.onEnd = rect => this.processMarquee(rect);
-          this.updateLayout(() => this.initFromURL());           
-          marqueeCanvas.addEventListener("pointerdown", () => focusHack());
+          this.updateLayout(() => this.initFromURL());                     
         }
 
         updateLayout(afterLayout) {
