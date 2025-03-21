@@ -805,12 +805,11 @@ export async function main() {
     return fbo;
   }
 
-  function drawPass(gl, framebuffer, width, height, setUniforms) {
+  function drawPass(gl, framebuffer, width, height) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
     gl.viewport(0, 0, width, height);
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    if (typeof setUniforms === "function") setUniforms();
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.finish();
@@ -1071,9 +1070,8 @@ void main() {
     const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
     const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
 
-    drawPass(gl, heuristicFbo, resWidth, resHeight, () => {
-      programInfo.uniforms.uUseHeuristic = 0;
-    });
+    programInfo.uniforms.uUseHeuristic = 0;
+    drawPass(gl, heuristicFbo, resWidth, resHeight);
     const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
     gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
 
@@ -1125,12 +1123,11 @@ void main() {
     const finalTex = isLowRes ? createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE) : null;
     const framebuffer = isLowRes ? createFramebufferForTexture(gl, finalTex) : null;
     
-    drawPass(gl, framebuffer, targetWidth, targetHeight, () => {
-      programInfo.uniforms.uUseHeuristic = maskSettings.active;
-      programInfo.uniforms.uMaskTestSeeSkippedPixels = maskSettings.testSeeSkippedPixels;
-      programInfo.uniforms.uLowResMask = 2;
-      programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];      
-    });
+    programInfo.uniforms.uUseHeuristic = maskSettings.active;
+    programInfo.uniforms.uMaskTestSeeSkippedPixels = maskSettings.testSeeSkippedPixels;
+    programInfo.uniforms.uLowResMask = 2;
+    programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];     
+    drawPass(gl, framebuffer, targetWidth, targetHeight);
   
     if (isLowRes) {
       blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex);
