@@ -635,54 +635,6 @@ let binding = null;
 
 /* ------------------ Utilities------------------ */
 
-function mpfr_zero() {
-  const zero = binding.mpfr_t();
-  binding.mpfr_init2(zero, 1200);
-  binding.mpfr_set_d(zero, 0, 0);
-  return zero;
-}
-function get_exp(val) {
-  const tmp = mpfr_zero();
-  binding.mpfr_log2(tmp, val, 0);
-  return binding.mpfr_get_d(tmp, 0);
-}
-function alignExponents(a, b) {
-  let [am, ae] = a, [bm, be] = b;
-  const retE = Math.max(ae, be);
-  if (retE > ae) am *= Math.pow(2, ae - retE);
-  else bm *= Math.pow(2, be - retE);
-  return [am, bm, retE];
-}
-function sub(a, b) {
-  let [am, bm, e] = alignExponents(a, b);
-  return [am - bm, e];
-}
-function add(a, b) {
-  let [am, bm, e] = alignExponents(a, b);
-  return [am + bm, e];
-}
-function mul(a, b) {
-  let [am, ae] = a, [bm, be] = b;
-  let m = am * bm, e = ae + be;
-  if (m !== 0) {
-    const logm = Math.round(Math.log2(Math.abs(m)));
-    m = m / Math.pow(2, logm);
-    e += logm;
-  }
-  return [m, e];
-}
-function maxabs(a, b) {
-  let [am, bm, e] = alignExponents(a, b);
-  return [Math.max(Math.abs(am), Math.abs(bm)), e];
-}
-function gt(a, b) {
-  const [am, bm] = alignExponents(a, b);
-  return am > bm;
-}
-function floaty(d) {
-  return Math.pow(2, d[1]) * d[0];
-}
-
 function uniforms(gl, program, definitions) {
   const uniformsMap = {};
   definitions.forEach(({ name, type }) => {
@@ -722,16 +674,11 @@ function uniforms(gl, program, definitions) {
 }
 
 const getOrCreateOffscreenCanvasByKey = (() => {
-  const offscreenCanvasCache = new Map();
-  return (key, width, height) => {
-    const cached = offscreenCanvasCache.get(key);
-    if (cached && cached.width === width && cached.height === height) {
-      return cached;
-    }
-    const canvas = new OffscreenCanvas(width, height);
-    offscreenCanvasCache.set(key, canvas);
-    return canvas;
-  };
+  let canvas = null, cachedKey = null;
+  return (key, width, height) =>
+    canvas && cachedKey === key && canvas.width === width && canvas.height === height
+      ? canvas
+      : (cachedKey = key, canvas = new OffscreenCanvas(width, height));
 })();
 
 function loadShader(gl, type, source) {
@@ -978,6 +925,54 @@ void main() {
         1.0                                     // alpha
     );
 }\`;
+
+function mpfr_zero() {
+  const zero = binding.mpfr_t();
+  binding.mpfr_init2(zero, 1200);
+  binding.mpfr_set_d(zero, 0, 0);
+  return zero;
+}
+function get_exp(val) {
+  const tmp = mpfr_zero();
+  binding.mpfr_log2(tmp, val, 0);
+  return binding.mpfr_get_d(tmp, 0);
+}
+function alignExponents(a, b) {
+  let [am, ae] = a, [bm, be] = b;
+  const retE = Math.max(ae, be);
+  if (retE > ae) am *= Math.pow(2, ae - retE);
+  else bm *= Math.pow(2, be - retE);
+  return [am, bm, retE];
+}
+function sub(a, b) {
+  let [am, bm, e] = alignExponents(a, b);
+  return [am - bm, e];
+}
+function add(a, b) {
+  let [am, bm, e] = alignExponents(a, b);
+  return [am + bm, e];
+}
+function mul(a, b) {
+  let [am, ae] = a, [bm, be] = b;
+  let m = am * bm, e = ae + be;
+  if (m !== 0) {
+    const logm = Math.round(Math.log2(Math.abs(m)));
+    m = m / Math.pow(2, logm);
+    e += logm;
+  }
+  return [m, e];
+}
+function maxabs(a, b) {
+  let [am, bm, e] = alignExponents(a, b);
+  return [Math.max(Math.abs(am), Math.abs(bm)), e];
+}
+function gt(a, b) {
+  const [am, bm] = alignExponents(a, b);
+  return am > bm;
+}
+function floaty(d) {
+  return Math.pow(2, d[1]) * d[0];
+}
 
 const createReferenceOrbit = (() => {
   const orbit = new Float32Array(1024 * 1024);
