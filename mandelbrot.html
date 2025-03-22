@@ -676,8 +676,7 @@ function maxabs(a, b) {
   return [Math.max(Math.abs(am), Math.abs(bm)), e];
 }
 function gt(a, b) {
-  let [am] = alignExponents(a, b);
-  let [, bm] = alignExponents(a, b);
+  const [am, bm] = alignExponents(a, b);
   return am > bm;
 }
 function floaty(d) {
