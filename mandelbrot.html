@@ -608,7 +608,7 @@
 
       // -----------------App Launch-------------------------
 
-      const useInlineWorkerCode = false;
+      const useInlineWorkerCode = true;
       const workerCode = useInlineWorkerCode ? getInlineWorkerCode() : await (await fetch("worker.js")).text();
       const createMandelbrotRenderer = async () => await createWorker(workerCode);
       window.app = new App(MandelbrotExplorer, "app");
@@ -673,13 +673,27 @@ function uniforms(gl, program, definitions) {
   });
 }
 
-const getOrCreateOffscreenCanvasByKey = (() => {
-  let canvas = null, cachedKey = null;
-  return (key, width, height) =>
-    canvas && cachedKey === key && canvas.width === width && canvas.height === height
-      ? canvas
-      : (cachedKey = key, canvas = new OffscreenCanvas(width, height));
+const getOrCreate = (() => {
+  const cache = new Map();
+  return (key, isCompatible, createNew) => {
+    const cachedObject = cache.get(key);
+    if (cachedObject && isCompatible(cachedObject)) {
+      return cachedObject;
+    }
+    const newObject = createNew();
+    cache.set(key, newObject);
+    return newObject;
+  };
 })();
+
+const getOrCreateOffscreenCanvas = (key, width, height) =>
+  getOrCreate (key,    
+    canvas => canvas.width === width && canvas.height === height,
+    () => new OffscreenCanvas(width, height)
+  );
+
+const getOrCreateFloat32Array = (key, length) =>
+  getOrCreate (key, o => o.length == length, () => new Float32Array(length));
 
 function loadShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -755,23 +769,25 @@ function getLayout(width, height) {
   return { left: -right, right, top, bottom: -top };
 }
 
-const fetchWebGLResources = (() => {
-  let webglResources = null;
-
-  return function(canvas) {
-    let gl, programInfo;
-    if (webglResources && webglResources.canvas === canvas) {
-      gl = webglResources.gl;
-      programInfo = webglResources.programInfo;
-    } else {
-      gl = canvas.getContext("webgl2", { antialias: false, preserveDrawingBuffer: true });
+function fetchWebGLResources(canvas) {
+  const resources = getOrCreate(
+    "resources",
+    resource => resource.canvas === canvas,
+    () => {
+      const gl = canvas.getContext("webgl2", {
+        antialias: false,
+        preserveDrawingBuffer: true
+      });
       if (!gl) throw new Error("WebGL2 not supported.");
 
       const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
       gl.useProgram(shaderProgram);
-      programInfo = {
+
+      const programInfo = {
         program: shaderProgram,
-        attribLocations: { vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition") },
+        attribLocations: {
+          vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
+        },
         uniforms: uniforms(gl, shaderProgram, [
           { name: "uProjectionMatrix", type: "Matrix4fv" },
           { name: "uModelViewMatrix", type: "Matrix4fv" },
@@ -783,33 +799,42 @@ const fetchWebGLResources = (() => {
           { name: "uFinalDim", type: "2f" },
           { name: "poly1", type: "4f" },
           { name: "poly2", type: "4f" },
-          { name: "sequence", type: "1i" }
+          { name: "sequence", type: "1i" },
+          { name: "uOrbitSize", type: "1i" }
         ])
       };
+
+      return { gl, programInfo, canvas };
     }
+  );
 
-    gl.viewport(0, 0, canvas.width, canvas.height);
-    const rect = getLayout(canvas.width, canvas.height);
-    const projectionMatrix = mat4.create();
-    mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
-    const modelViewMatrix = mat4.create();
+  const { gl, programInfo } = resources;
 
-    gl.useProgram(programInfo.program);
-    programInfo.uniforms.uProjectionMatrix = projectionMatrix;
-    programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
-    const positionBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-    const layout = [rect.right, rect.top, rect.left, rect.top, rect.right, rect.bottom, rect.left, rect.bottom];
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
-    const buffers = { position: positionBuffer };
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  const rect = getLayout(canvas.width, canvas.height);
+  const projectionMatrix = mat4.create();
+  mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
+  const modelViewMatrix = mat4.create();
 
-    webglResources = { gl, programInfo, buffers, canvas };
-    return webglResources;
-  };
-})();
+  gl.useProgram(programInfo.program);
+  programInfo.uniforms.uProjectionMatrix = projectionMatrix;
+  programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
+  const positionBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  const layout = [
+    rect.right, rect.top,
+    rect.left, rect.top,
+    rect.right, rect.bottom,
+    rect.left, rect.bottom
+  ];
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
+  resources.buffers = { position: positionBuffer };
 
-  /* ------------------ Shader Sources ------------------ */
-  const vsSource = \`#version 300 es
+  return { ...resources, buffers: resources.buffers };
+}
+
+/* ------------------ Shader Sources ------------------ */
+const vsSource = \`#version 300 es
 in vec4 aVertexPosition;
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
@@ -819,8 +844,9 @@ void main() {
   delta = vec2(aVertexPosition[0], aVertexPosition[1]);
 }\`;
 
-  const fsSource = \`#version 300 es
+const fsSource = \`#version 300 es
 precision highp float;
+uniform int uOrbitSize;
 in highp vec2 delta;
 out vec4 fragColor;
 uniform vec4 uState;
@@ -832,21 +858,23 @@ uniform vec2 uFinalDim;
 uniform vec4 poly1;
 uniform vec4 poly2;
 uniform sampler2D sequence;
+
 float get_orbit_x(int i) {
   i = i * 3;
-  int row = i / 1024;
-  return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+  int row = i / uOrbitSize;
+  return texelFetch(sequence, ivec2(i % uOrbitSize, row), 0)[0];
 }
 float get_orbit_y(int i) {
   i = i * 3 + 1;
-  int row = i / 1024;
-  return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+  int row = i / uOrbitSize;
+  return texelFetch(sequence, ivec2(i % uOrbitSize, row), 0)[0];
 }
 float get_orbit_scale(int i) {
   i = i * 3 + 2;
-  int row = i / 1024;
-  return texelFetch(sequence, ivec2(i % 1024, row), 0)[0];
+  int row = i / uOrbitSize;
+  return texelFetch(sequence, ivec2(i % uOrbitSize, row), 0)[0];
 }
+
 void main() {
   if (uUseHeuristic) {
     vec2 uv = gl_FragCoord.xy / uFinalDim;
@@ -974,61 +1002,59 @@ function floaty(d) {
   return Math.pow(2, d[1]) * d[0];
 }
 
-const createReferenceOrbit = (() => {
-  const orbit = new Float32Array(1024 * 1024);
-  return (cx, cy, radius, iterations) => {
-    let x = mpfr_zero(), y = mpfr_zero();    
-    orbit.fill(-1);
-    const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
-    let polylim = 0,
+function createReferenceOrbit(cx, cy, radius, iterations, orbitSize) {
+  const orbit = getOrCreateFloat32Array ("orbit", orbitSize * orbitSize); 
+  orbit.fill(-1);
+  let x = mpfr_zero(), y = mpfr_zero();    
+  const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
+  let polylim = 0,
       Bx = [0, 0], By = [0, 0],
       Cx = [0, 0], Cy = [0, 0],
       Dx = [0, 0], Dy = [0, 0],
       poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
       not_failed = true;
-    for (let i = 0; i < iterations; i++) {
-      const x_exponent = binding.mpfr_get_exp(x);
-      const y_exponent = binding.mpfr_get_exp(y);
-      let scale_exponent = Math.max(x_exponent, y_exponent);
-      if (scale_exponent < -10000) scale_exponent = 0;
-      let tmp = 0;
-      orbit[3 * i] = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
-      orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
-      orbit[3 * i + 2] = scale_exponent;
-      const fx = [orbit[3 * i], orbit[3 * i + 2]];
-      const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
-      binding.mpfr_mul(txx, x, x, 0);
-      binding.mpfr_mul(txy, x, y, 0);
-      binding.mpfr_mul(tyy, y, y, 0);
-      binding.mpfr_sub(x, txx, tyy, 0);
-      binding.mpfr_add(x, x, cx, 0);
-      binding.mpfr_add(y, txy, txy, 0);
-      binding.mpfr_add(y, y, cy, 0);
-      const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
-      [Bx, By, Cx, Cy, Dx, Dy] = [
-        add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
-        mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
-        sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
-        add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
-        mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
-        mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
-      ];
-      tmp = 0;
-      const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
-      const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
-      if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(radius)], maxabs(Dx, Dy)))) {
-        if (not_failed) {
-          poly = prev_poly;
-          polylim = i;
-        }
-      } else {
-        not_failed = false;
+  for (let i = 0; i < iterations; i++) {
+    const x_exponent = binding.mpfr_get_exp(x);
+    const y_exponent = binding.mpfr_get_exp(y);
+    let scale_exponent = Math.max(x_exponent, y_exponent);
+    if (scale_exponent < -10000) scale_exponent = 0;
+    let tmp = 0;
+    orbit[3 * i] = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
+    orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
+    orbit[3 * i + 2] = scale_exponent;
+    const fx = [orbit[3 * i], orbit[3 * i + 2]];
+    const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
+    binding.mpfr_mul(txx, x, x, 0);
+    binding.mpfr_mul(txy, x, y, 0);
+    binding.mpfr_mul(tyy, y, y, 0);
+    binding.mpfr_sub(x, txx, tyy, 0);
+    binding.mpfr_add(x, x, cx, 0);
+    binding.mpfr_add(y, txy, txy, 0);
+    binding.mpfr_add(y, y, cy, 0);
+    const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
+    [Bx, By, Cx, Cy, Dx, Dy] = [
+      add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
+      mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
+      sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
+      add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
+      mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
+      mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
+    ];
+    tmp = 0;
+    const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
+    const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
+    if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(radius)], maxabs(Dx, Dy)))) {
+      if (not_failed) {
+        poly = prev_poly;
+        polylim = i;
       }
-      if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
+    } else {
+      not_failed = false;
     }
-    return [orbit, poly, polylim];
-  };
-})();
+    if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
+  }
+  return [orbit, poly, polylim];
+}
 
 /* creates a mask in low resolution of black pixels presumed not worth computing in higher resolution, as also presumed to be black */
 function createMask(gl, programInfo, resWidth, resHeight, settings)
@@ -1075,7 +1101,7 @@ function createMask(gl, programInfo, resWidth, resHeight, settings)
 function renderScaled(gl, programInfo, canvas, scaleFactor) {        
   // maskSettings: optimal blend of accuracy and performance
   // set testSeeSkippedPixels to 1 to see effect
-  const maskSettings = { active: 1, testSeeSkippedPixels: 0, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
+  const maskSettings = { active: true, testSeeSkippedPixels: false, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
 
   const targetWidth = Math.floor(canvas.width / scaleFactor);
   const targetHeight = Math.floor(canvas.height / scaleFactor);
@@ -1113,9 +1139,10 @@ function renderScaled(gl, programInfo, canvas, scaleFactor) {
  * @param {Object} [options={}] - Optional rendering parameters.
  * @param {boolean} [options.lowRes=false] - Render in low resolution if true; full resolution if false.
  * @param {number} [options.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
+ * @param {number} [options.orbitSize=1024] - The size of the orbit texture.
  * @returns {ImageBitmap}
  */
-function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {
+function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {  
   const center = [mpfr_zero(), mpfr_zero()];
   const radius = mpfr_zero();
   
@@ -1123,7 +1150,8 @@ function render(width, height, x, y, r, iterations, cmapscale, colorMax, options
   binding.mpfr_set_string(center[1], y, 10, 0);
   binding.mpfr_set_string(radius, r, 10, 0);
   
-  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], radius, iterations);
+  const orbitSize = options.orbitSize || 1024;
+  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], radius, iterations, orbitSize);
   
   const rexp = binding.mpfr_get_exp(radius);
   const r_val = binding.mpfr_get_d_2exp(0, radius, 0);
@@ -1139,9 +1167,9 @@ function render(width, height, x, y, r, iterations, cmapscale, colorMax, options
     mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
   ].map(floaty);
   
-  const offscreenCanvas = getOrCreateOffscreenCanvasByKey('mainRender', width, height);
+  const offscreenCanvas = getOrCreateOffscreenCanvas('mainRender', width, height);
   const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
-  createAndSetupTexture(gl, 0, 1024, 1024, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));    
+  createAndSetupTexture(gl, 0, orbitSize, orbitSize, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));    
   gl.useProgram(programInfo.program);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
   gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
@@ -1151,6 +1179,7 @@ function render(width, height, x, y, r, iterations, cmapscale, colorMax, options
   programInfo.uniforms.uColorMax = colorMax || iterations;
   programInfo.uniforms.poly1 = [poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]];
   programInfo.uniforms.poly2 = [poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]];
+  programInfo.uniforms.uOrbitSize = orbitSize;
     
   renderScaled(gl, programInfo, offscreenCanvas, !options.lowRes ? 1 : (options.scaleFactor || 3));
     
