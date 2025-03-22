@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
   <head>
@@ -365,8 +366,8 @@
         }
 
         async renderFractal() {
-          const zoomingIn = this.prevZ.lessThan(this.z)
-          const zoomingOut = this.prevZ.greaterThan(this.z)
+          const zoomingIn = this.prevZ && this.prevZ.lessThan(this.z)
+          const zoomingOut = this.prevZ && this.prevZ.greaterThan(this.z)
 
           if (!this.animating) {
             Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum
@@ -980,59 +981,62 @@ void main() {
     );
 }\`;
 
-function createReferenceOrbit(cx, cy, radius, iterations) {
-  let x = mpfr_zero(), y = mpfr_zero();
-  const orbit = new Float32Array(1024 * 1024);
-  orbit.fill(-1);
-  const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
-  let polylim = 0,
-    Bx = [0, 0], By = [0, 0],
-    Cx = [0, 0], Cy = [0, 0],
-    Dx = [0, 0], Dy = [0, 0],
-    poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
-    not_failed = true;
-  for (let i = 0; i < iterations; i++) {
-    const x_exponent = binding.mpfr_get_exp(x);
-    const y_exponent = binding.mpfr_get_exp(y);
-    let scale_exponent = Math.max(x_exponent, y_exponent);
-    if (scale_exponent < -10000) scale_exponent = 0;
-    let tmp = 0;
-    orbit[3 * i] = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
-    orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
-    orbit[3 * i + 2] = scale_exponent;
-    const fx = [orbit[3 * i], orbit[3 * i + 2]];
-    const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
-    binding.mpfr_mul(txx, x, x, 0);
-    binding.mpfr_mul(txy, x, y, 0);
-    binding.mpfr_mul(tyy, y, y, 0);
-    binding.mpfr_sub(x, txx, tyy, 0);
-    binding.mpfr_add(x, x, cx, 0);
-    binding.mpfr_add(y, txy, txy, 0);
-    binding.mpfr_add(y, y, cy, 0);
-    const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
-    [Bx, By, Cx, Cy, Dx, Dy] = [
-      add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
-      mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
-      sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
-      add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
-      mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
-      mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
-    ];
-    tmp = 0;
-    const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
-    const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
-    if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(radius)], maxabs(Dx, Dy)))) {
-      if (not_failed) {
-        poly = prev_poly;
-        polylim = i;
+const createReferenceOrbit = (() => {
+  let orbit = new Float32Array(1024 * 1024);
+  return (cx, cy, radius, iterations) => {
+    let x = mpfr_zero(), y = mpfr_zero();
+    const orbit = new Float32Array(1024 * 1024);
+    orbit.fill(-1);
+    const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
+    let polylim = 0,
+      Bx = [0, 0], By = [0, 0],
+      Cx = [0, 0], Cy = [0, 0],
+      Dx = [0, 0], Dy = [0, 0],
+      poly = [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+      not_failed = true;
+    for (let i = 0; i < iterations; i++) {
+      const x_exponent = binding.mpfr_get_exp(x);
+      const y_exponent = binding.mpfr_get_exp(y);
+      let scale_exponent = Math.max(x_exponent, y_exponent);
+      if (scale_exponent < -10000) scale_exponent = 0;
+      let tmp = 0;
+      orbit[3 * i] = binding.mpfr_get_d_2exp(tmp, x, 0) / Math.pow(2, scale_exponent - x_exponent);
+      orbit[3 * i + 1] = binding.mpfr_get_d_2exp(tmp, y, 0) / Math.pow(2, scale_exponent - y_exponent);
+      orbit[3 * i + 2] = scale_exponent;
+      const fx = [orbit[3 * i], orbit[3 * i + 2]];
+      const fy = [orbit[3 * i + 1], orbit[3 * i + 2]];
+      binding.mpfr_mul(txx, x, x, 0);
+      binding.mpfr_mul(txy, x, y, 0);
+      binding.mpfr_mul(tyy, y, y, 0);
+      binding.mpfr_sub(x, txx, tyy, 0);
+      binding.mpfr_add(x, x, cx, 0);
+      binding.mpfr_add(y, txy, txy, 0);
+      binding.mpfr_add(y, y, cy, 0);
+      const prev_poly = [Bx, By, Cx, Cy, Dx, Dy];
+      [Bx, By, Cx, Cy, Dx, Dy] = [
+        add(mul([2, 0], sub(mul(fx, Bx), mul(fy, By))), [1, 0]),
+        mul([2, 0], add(mul(fx, By), mul(fy, Bx))),
+        sub(add(mul([2, 0], sub(mul(fx, Cx), mul(fy, Cy))), mul(Bx, Bx)), mul(By, By)),
+        add(mul([2, 0], add(mul(fx, Cy), mul(fy, Cx))), mul(mul([2, 0], Bx), By)),
+        mul([2, 0], add(sub(mul(fx, Dx), mul(fy, Dy)), sub(mul(Cx, Bx), mul(Cy, By)))),
+        mul([2, 0], add(add(add(mul(fx, Dy), mul(fy, Dx)), mul(Cx, By)), mul(Cy, Bx)))
+      ];
+      tmp = 0;
+      const fx_val = [binding.mpfr_get_d_2exp(tmp, x, 0), binding.mpfr_get_exp(x)];
+      const fy_val = [binding.mpfr_get_d_2exp(tmp, y, 0), binding.mpfr_get_exp(y)];
+      if (i === 0 || gt(maxabs(Cx, Cy), mul([1000, binding.mpfr_get_exp(radius)], maxabs(Dx, Dy)))) {
+        if (not_failed) {
+          poly = prev_poly;
+          polylim = i;
+        }
+      } else {
+        not_failed = false;
       }
-    } else {
-      not_failed = false;
+      if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
     }
-    if (gt(add(mul(fx_val, fx_val), mul(fy_val, fy_val)), [400, 0])) break;
-  }
-  return [orbit, poly, polylim];
-}
+    return [orbit, poly, polylim];
+  };
+})();
 
 /* creates a mask in low resolution of black pixels presumed not worth computing in higher resolution, as also presumed to be black */
 function createMask(gl, programInfo, resWidth, resHeight, settings)
