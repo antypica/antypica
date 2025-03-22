@@ -608,7 +608,7 @@
 
       // -----------------App Launch-------------------------
 
-      const useInlineWorkerCode = true;
+      const useInlineWorkerCode = false;
       const workerCode = useInlineWorkerCode ? getInlineWorkerCode() : await (await fetch("worker.js")).text();
       const createMandelbrotRenderer = async () => await createWorker(workerCode);
       window.app = new App(MandelbrotExplorer, "app");
