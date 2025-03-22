@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html>
   <head>
@@ -982,10 +981,9 @@ void main() {
 }\`;
 
 const createReferenceOrbit = (() => {
-  let orbit = new Float32Array(1024 * 1024);
+  const orbit = new Float32Array(1024 * 1024);
   return (cx, cy, radius, iterations) => {
-    let x = mpfr_zero(), y = mpfr_zero();
-    const orbit = new Float32Array(1024 * 1024);
+    let x = mpfr_zero(), y = mpfr_zero();    
     orbit.fill(-1);
     const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
     let polylim = 0,
