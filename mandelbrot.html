@@ -114,7 +114,7 @@
   <body>
     <div id="app"/>
     <script type="module">
-      import { App, Component, div, h1, button, selector, canvas } from "https://esm.sh/solenya";
+      import { App, Component, div, h1, button, selector, canvas } from "https://cdn.skypack.dev/solenya";
       import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
 
       function debounce(fn, ms) {
@@ -278,7 +278,6 @@
         colorChoice = 24.2;
         animating = false;
         rendering = false;
-        zoomOutFactor = 2;
         maxZ = new Decimal(1E300);
         prevZ = undefined
 
@@ -379,14 +378,21 @@
           
           else {            
             try {
-              if (this.rendering && this.animating)              
-                return;              
-              
-              const x = this.centerX.toString();
-              const y =  this.centerY.toString();
-              const r = new Decimal(1).dividedBy(this.zActual).toString();              
-              this.rendering = true            
-              const bitmap = await this.mandelbrotRenderer(this.canvasWidth, this.canvasHeight, x, y, r, this.maxIter, this.colorChoice, this.colorMax, { lowRes: this.animating });
+              if (this.rendering && this.animating) { return; }
+
+              this.rendering = true                          
+              const bitmap = await this.mandelbrotRenderer({
+                width: this.canvasWidth,
+                height: this.canvasHeight,
+                x: this.centerX.toString(),
+                y: this.centerY.toString(),
+                r: Decimal(1).dividedBy(this.zActual).toString(),
+                iterations: this.maxIter,
+                colorChoice: this.colorChoice,
+                colorMax: this.colorMax,
+                lowRes: this.animating
+              });      
+
               const mainCtx = mainCanvas.getContext("2d");
               mainCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
             }
@@ -546,8 +552,8 @@
         }        
       }
 
-      /* Runs a worker with an async `main` function to be awaited for initialisation
-         returning a worker function that returns a result to the UI thread. */
+      /* Runs a worker with an async `main` function to be awaited for initialisation, returning a worker
+       * function that returns a result to the UI thread. Faster than comlink when animating. */
       async function createWorker(workerCode) {
         workerCode+=
           `const initWorker = async (initWorker) => {
@@ -582,18 +588,13 @@
             if (pendingRequests.has(id)) {
               const { resolve, reject } = pendingRequests.get(id);
               pendingRequests.delete(id);
-              if (error) {
-                reject(new Error(error));
-              } else {
-                resolve(result);
-              }
+              if (error) { reject(new Error(error)); }
+              else { resolve(result); }
             }
           }
         };
         
-        worker.onerror = (err) => {
-          console.error("Worker encountered an error:", err);
-        };
+        worker.onerror = (err) => { console.error("Worker encountered an error:", err); };
         
         await readyPromise;
         
@@ -630,8 +631,12 @@
 import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
 import { init } from "https://cdn.skypack.dev/gmp-wasm";
 
-// Global variable for the MPFR binding.
-let binding = null;
+let binding = null; // Global variable for the MPFR binding.
+
+export async function main() {  
+  ({ binding } = await init());  
+  return render;
+}  
 
 /* ------------------ Utilities------------------ */
 
@@ -844,7 +849,7 @@ void main() {
   delta = vec2(aVertexPosition[0], aVertexPosition[1]);
 }\`;
 
-const fsSource = \`#version 300 es
+const fsSource = \`\#version 300 es
 precision highp float;
 uniform int uOrbitSize;
 in highp vec2 delta;
@@ -1098,7 +1103,7 @@ function createMask(gl, programInfo, resWidth, resHeight, settings)
   return { mask, width: resWidth, height: resHeight };
 }
 
-function renderScaled(gl, programInfo, canvas, scaleFactor) {        
+function renderScaledWithMask(gl, programInfo, canvas, scaleFactor) {        
   // maskSettings: optimal blend of accuracy and performance
   // set testSeeSkippedPixels to 1 to see effect
   const maskSettings = { active: true, testSeeSkippedPixels: false, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
@@ -1128,34 +1133,36 @@ function renderScaled(gl, programInfo, canvas, scaleFactor) {
 
 /**
  * Returns a Mandelbrot set as a bitmap.
- * @param {number} width - Pixel width.
- * @param {number} height - Pixel height.
- * @param {string} x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
- * @param {string} y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
- * @param {string} r - The arbitrary precision radius/zoom magnification.
- * @param {number} iterations - Maximum iterations.
- * @param {number} cmapscale - Color map scale factor.
- * @param {number} colorMax - Fixed iteration count for coloring.
- * @param {Object} [options={}] - Optional rendering parameters.
- * @param {boolean} [options.lowRes=false] - Render in low resolution if true; full resolution if false.
- * @param {number} [options.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
- * @param {number} [options.orbitSize=1024] - The size of the orbit texture.
+ * @param {Object} args - Rendering parameters.
+ * @param {number} args.width - Pixel width.
+ * @param {number} args.height - Pixel height.
+ * @param {string} args.x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
+ * @param {string} args.y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
+ * @param {string} args.r - The arbitrary precision radius/zoom magnification.
+ * @param {number} args.iterations - Maximum iterations.
+ * @param {number} args.colorChoice - Color map scale factor.
+ * @param {number} args.colorMax - Fixed iteration count for coloring; defaults to iterations.
+ * @param {boolean} [args.lowRes=false] - Render in low resolution if true; full resolution if false.
+ * @param {number} [args.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
+ * @param {number} [args.orbitSize=1024] - The size of the orbit texture.
  * @returns {ImageBitmap}
  */
-function render(width, height, x, y, r, iterations, cmapscale, colorMax, options = {}) {  
+function render(args) {
+  const defaults = { lowRes: false, scaleFactor: 3, orbitSize: 1024 };
+  args = { ...defaults, ...args };
+    
   const center = [mpfr_zero(), mpfr_zero()];
   const radius = mpfr_zero();
-  
-  binding.mpfr_set_string(center[0], x, 10, 0);
-  binding.mpfr_set_string(center[1], y, 10, 0);
-  binding.mpfr_set_string(radius, r, 10, 0);
-  
-  const orbitSize = options.orbitSize || 1024;
-  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], radius, iterations, orbitSize);
-  
+    
+  binding.mpfr_set_string(center[0], args.x, 10, 0);
+  binding.mpfr_set_string(center[1], args.y, 10, 0);
+  binding.mpfr_set_string(radius, args.r, 10, 0);
+    
+  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], args.radius, args.iterations, args.orbitSize);
+    
   const rexp = binding.mpfr_get_exp(radius);
   const r_val = binding.mpfr_get_d_2exp(0, radius, 0);
-  
+    
   const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
   const poly_scale = [1, -poly_scale_exp[1]];
   const poly_scaled = [
@@ -1166,59 +1173,24 @@ function render(width, height, x, y, r, iterations, cmapscale, colorMax, options
     mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
     mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
   ].map(floaty);
-  
-  const offscreenCanvas = getOrCreateOffscreenCanvas('mainRender', width, height);
+    
+  const offscreenCanvas = getOrCreateOffscreenCanvas('mainRender', args.width, args.height);
   const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
-  createAndSetupTexture(gl, 0, orbitSize, orbitSize, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));    
+  createAndSetupTexture(gl, 0, args.orbitSize, args.orbitSize, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));    
   gl.useProgram(programInfo.program);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
   gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
   gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
-    
-  programInfo.uniforms.uState = [0, cmapscale, 1 + get_exp(radius), iterations];
-  programInfo.uniforms.uColorMax = colorMax || iterations;
+      
+  programInfo.uniforms.uState = [0, args.colorChoice, 1 + get_exp(radius), args.iterations];
+  programInfo.uniforms.uColorMax = args.colorMax || args.iterations;
   programInfo.uniforms.poly1 = [poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]];
   programInfo.uniforms.poly2 = [poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]];
-  programInfo.uniforms.uOrbitSize = orbitSize;
-    
-  renderScaled(gl, programInfo, offscreenCanvas, !options.lowRes ? 1 : (options.scaleFactor || 3));
-    
+  programInfo.uniforms.uOrbitSize = args.orbitSize;
+      
+  renderScaledWithMask(gl, programInfo, offscreenCanvas, !args.lowRes ? 1 : args.scaleFactor);
+      
   return offscreenCanvas.transferToImageBitmap();
-}
-
-const takeLatest = (() => {
-  let running = false;
-  let pending = null;
-  return async function(fn, ...args) {
-    if (running) {              
-      pending = { fn, args, resolve: null, reject: null };
-      return new Promise((resolve, reject) => { pending.resolve = resolve; pending.reject = reject; });
-    }
-    running = true;
-    try {
-      const result = await fn(...args);
-      running = false;              
-      if (pending) {
-        const { fn: nextFn, args: nextArgs, resolve, reject } = pending;
-        pending = null;                
-        setTimeout(() => takeLatest(nextFn, ...nextArgs).then(resolve).catch(reject), 0);
-      }
-      return result;
-    } catch (error) {
-      running = false;
-      if (pending) {
-        const { fn: nextFn, args: nextArgs, resolve, reject } = pending;
-        pending = null;
-        setTimeout(() => takeLatest(nextFn, ...nextArgs).then(resolve).catch(reject), 0);
-      }
-      throw error;
-    }
-  };
-})();
-
-export async function main() {  
-  ({ binding } = await init());
-  return (...args) => takeLatest(render, ...args);
 }
 `;}
     </script>
