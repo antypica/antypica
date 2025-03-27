@@ -479,8 +479,7 @@
             this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
             this.zActual = fromState.zActual.times(interpolatedZoomFactor);
 
-            if (t === 1) {                              
-              this.renderFractal();
+            if (t === 1) {
               this.animating = false;
             }
             this.renderFractal({forcePreview: t == 1});
