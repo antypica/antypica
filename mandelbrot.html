@@ -79,7 +79,7 @@
         border-radius: 4px;
         cursor: pointer;
         white-space: nowrap;
-        transition: background 0.2s, color 0.2s;    
+        transition: background 0.2s, color 0.2s;
       }
       @media (hover: hover) {
         .controlButton:hover {
@@ -112,7 +112,7 @@
     </style>
   </head>
   <body>
-    <div id="app"/>
+    <div id="app"></div>
     <script type="module">
       import { App, Component, div, h1, button, selector, canvas } from "https://cdn.skypack.dev/solenya";
       import Decimal from "https://cdn.skypack.dev/decimal.js@10.3.1";
@@ -261,13 +261,13 @@
       }
 
       class MandelbrotExplorer extends Component {
-        defaultCenterX = new Decimal(-0.75)
-        defaultCenterY = new Decimal(0.0)
-        defaultZ = new Decimal(1)
-        centerX = undefined
+        defaultCenterX = new Decimal(-0.75);
+        defaultCenterY = new Decimal(0.0);
+        defaultZ = new Decimal(1);
+        centerX = undefined;
         centerY = undefined;
         z = undefined;
-        pleasantCanvasRatio
+        pleasantCanvasRatio;
 
         canvasWidth = window.innerWidth;
         canvasHeight = window.innerHeight;
@@ -275,11 +275,12 @@
         maxIterDefault = 1000;
         maxIter = this.maxIterDefault;
         colorMax = 1200;
-        colorChoice = 24.2;
+        colorScale = 24.2;
         animating = false;
         rendering = false;
+        zoomOutFactor = 2;
         maxZ = new Decimal(1E300);
-        prevZ = undefined
+        prevZ = undefined;
 
         zoomStack = [];
         zoomDuration = 600;
@@ -289,9 +290,9 @@
         mandelbrotRenderer = undefined;
         
         get zActual () { return this.z.times(this.pleasantCanvasRatio); }
-        set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio) }        
+        set zActual (value) { this.z = value.dividedBy(this.pleasantCanvasRatio); }        
 
-        get zoomAnimationsEnabled () { return this.maxIter <= 5000 }
+        get zoomAnimationsEnabled () { return this.maxIter <= 5000; }
 
         busy () {
           return this.animating || this.rendering;
@@ -302,11 +303,12 @@
           window.addEventListener("resize", debounce(() => this.updateLayout(), 100));
         }
 
-        async init() {
-          this.mandelbrotRenderer = await createMandelbrotRenderer();
+        async init() {                             
+          this.mandelbrotRenderer = new MandelbrotRenderer();
+          await this.mandelbrotRenderer.ready()
           this.marquee.onStart = () => this.tip.show();
           this.marquee.onEnd = rect => this.processMarquee(rect);
-          this.updateLayout(() => this.initFromURL());                     
+          this.updateLayout(() => this.initFromURL());
         }
 
         updateLayout(afterLayout) {
@@ -326,8 +328,8 @@
             this.centerX = getNumericParam("x", d => new Decimal(d), this.defaultCenterX);
             this.centerY = getNumericParam("y", d => new Decimal(d), this.defaultCenterY);
             this.z = this.prevZ = getNumericParam("z", d => new Decimal(d), this.defaultZ);
-            this.maxIter = getNumericParam("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000)
-          })
+            this.maxIter = getNumericParam("iterations", d => parseInt(d), this.maxIterDefault, 100, 100000);
+          });
         }
 
         zArg() {
@@ -358,51 +360,59 @@
         updated(payload) {
           if (payload.key == "maxIter") {
             this.renderFractal();
-            document.getElementById("maxIter").blur()
-          }              
-          document.getElementById("maxIter").value = this.maxIter; // hack for weird databinding issue.
+            document.getElementById("maxIter").blur();
+          }
+          document.getElementById("maxIter").value = this.maxIter;
         }
 
-        async renderFractal() {
-          const zoomingIn = this.prevZ && this.prevZ.lessThan(this.z)
-          const zoomingOut = this.prevZ && this.prevZ.greaterThan(this.z)
+        async renderFractal(options) {                    
+          const zoomingIn = this.prevZ && this.prevZ.lessThan(this.z);
+          const zoomingOut = this.prevZ && this.prevZ.greaterThan(this.z);
 
           if (!this.animating) {
-            Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 }); // decimals are expensive; keep precision to minimum
-            this.prevZ = this.z
-          }
-          
-          if (zoomingOut && this.z.lessThan(this.defaultZ.add(0.01))) { // we've hit rock bottom, reset defaults
-            this.reset()
-          }
-          
-          else {            
+            Decimal.set({ precision: Math.max(this.prevZ.e, this.zActual.e) + 6 });
+            this.prevZ = this.z;
+          }                              
+          if (zoomingOut && this.z.lessThan(this.defaultZ.add(0.01))) {
+            this.reset();
+          } else {                 
+            const args = {
+              width: this.canvasWidth,
+              height: this.canvasHeight,
+              x: this.centerX.toString(),
+              y: this.centerY.toString(),
+              r: new Decimal(1).dividedBy(this.zActual).toString(),
+              iterations: this.maxIter,
+              colorScale: this.colorScale,
+              colorMax: this.colorMax,
+              lowRes: this.animating,
+              ...options
+            };
             try {
-              if (this.rendering && this.animating) { return; }
-
-              this.rendering = true                          
-              const bitmap = await this.mandelbrotRenderer({
-                width: this.canvasWidth,
-                height: this.canvasHeight,
-                x: this.centerX.toString(),
-                y: this.centerY.toString(),
-                r: Decimal(1).dividedBy(this.zActual).toString(),
-                iterations: this.maxIter,
-                colorChoice: this.colorChoice,
-                colorMax: this.colorMax,
-                lowRes: this.animating
-              });      
-
-              const mainCtx = mainCanvas.getContext("2d");
-              mainCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
+              this.rendering = true; 
+              await this.mandelbrotRenderer.startRenderer(args);
+              const ctx = this.canvasEl.getContext("2d");
+              while (true) {
+                const { done, value } = await this.mandelbrotRenderer.nextFrame();
+                if (done) break;
+                const { bitmap, sourceRect, destinationRect, progress } = value;
+                if (bitmap) {
+                  ctx.drawImage(bitmap,
+                    sourceRect.x, sourceRect.y, sourceRect.width, sourceRect.height,
+                    destinationRect.x, destinationRect.y, destinationRect.width, destinationRect.height 
+                  )
+                }                
+              }
+            }
+            catch (e) {
+              console.error(e);
             }
             finally {
-              this.rendering = false
+              this.rendering = false;
             }
-
             if (!this.animating) {
-              this.updateURL();              
-            }
+              this.updateURL();
+            }            
           }
         }
 
@@ -430,7 +440,7 @@
           const newCenterY = p1.y.plus(p2.y).dividedBy(2);
 
           const fractalWidth = p2.x.minus(p1.x).abs();
-          const fractalHeight = p1.y.minus(p2.y).abs(); // p1.y is top, p2.y is bottom
+          const fractalHeight = p1.y.minus(p2.y).abs();
 
           const newActualWidth = fractalWidth.dividedBy(aspect >= 1 ? (2 * aspect) : 2);
           const newActualHeight = fractalHeight.dividedBy(aspect >= 1 ? 2 : (2 / aspect));
@@ -465,16 +475,15 @@
             const interpolatedZoomFactor = new Decimal(1).plus(new Decimal(t).times(zoom.minus(1)));
             const factor = new Decimal(t).times(zoom).dividedBy(interpolatedZoomFactor);
 
-            // Linearly interpolate the center position based on the factor
             this.centerX = fromState.centerX.minus(factor.times(fromState.centerX.minus(toState.centerX)));
             this.centerY = fromState.centerY.minus(factor.times(fromState.centerY.minus(toState.centerY)));
             this.zActual = fromState.zActual.times(interpolatedZoomFactor);
 
-            if (t === 1) {                
+            if (t === 1) {                              
               this.renderFractal();
               this.animating = false;
             }
-            this.renderFractal();
+            this.renderFractal({forcePreview: t == 1});
             if (t < 1) {
               requestAnimationFrame(animateFrame);
             }
@@ -505,7 +514,7 @@
             this.centerX = this.defaultCenterX;
             this.centerY = this.defaultCenterY;
             this.maxIter = this.maxIterDefault;
-          })
+          });
           setTimeout(() => this.renderFractal(), 1);
         }
 
@@ -527,7 +536,7 @@
           { label: "10K Still", value: 10000 },
           { label: "20K Still", value: 20000 },
           { label: "50K 💀", value: 50000 }
-        ]
+        ];
 
         view() {
           return div(
@@ -541,104 +550,112 @@
             this.tip.view({ class: "tipOverlay" }, "click and drag to zoom"),
             div({ class: "infoBox" },
               h1({ class: "title" }, "∞Mandelbrot Ex²plorer"),
-              div({ class: "controls" },                
+              div({ class: "controls" },
                 controlButton({ onclick: () => this.saveImage() }, "Snapshot"),
-                selector({target: this, prop : () => this.maxIter, options: this.iterationOptions, id: "maxIter" }),
+                selector({ target: this, prop: () => this.maxIter, options: this.iterationOptions, id: "maxIter" }),
                 controlButton({ onclick: () => this.reset() }, "Reset"),
                 controlButton({ onclick: () => this.zoomOut() }, "Zoom Out")
               )
             )
           );
-        }        
+        }
+      }    
+
+      class WorkerApi {
+        messageId = 0;
+        pending = new Map();
+        constructor (worker) {
+          this.worker = worker;
+          worker.addEventListener("message", event => {
+            const { id, result, error } = event.data;
+            const deferred = this.pending.get(id);
+            if (deferred) {
+              error ? deferred.reject(new Error(error)) : deferred.resolve(result);
+              this.pending.delete(id);
+            }
+          });
+        }                        
+        call(method, args) {
+          return new Promise((resolve, reject) => {
+            const id = this.messageId++;
+            this.pending.set(id, { resolve, reject });
+            this.worker.postMessage({ id, method, args });
+          });
+        }
       }
 
-      /* Runs a worker with an async `main` function to be awaited for initialisation, returning a worker
-       * function that returns a result to the UI thread. Faster than comlink when animating. */
-      async function createWorker(workerCode) {
-        workerCode+=
-          `const initWorker = async (initWorker) => {
-             const worker = await initWorker();  
-             self.postMessage({ type: "ready" });
-             self.addEventListener('message', async (e) => {
-                const { id, args } = e.data;
-             try {
-                const result = await worker(...args);
-                self.postMessage({ id, result }, [result]);
-             } catch (error) {
-                self.postMessage({ id, error: error.message });
-             }
-           });
-          }
-          initWorker(main);`
+      class MandelbrotRenderer extends WorkerApi {
+        static getWorker() {
+          const useInlineWorkerCode = true; 
+          const workerUrl = ! useInlineWorkerCode ? "worker.js" :  URL.createObjectURL(new Blob([getInlineWorkerCode()], { type: "application/javascript" }));      
+          return new Worker(workerUrl, { type: "module" })
+        }
+        constructor () { super (MandelbrotRenderer.getWorker()) }
 
-        const blob = new Blob([workerCode], { type: "application/javascript" });
-        const workerUrl = URL.createObjectURL(blob);
-        const worker = new Worker(workerUrl, { type: "module" });
-        
-        let requestId = 0;
-        const pendingRequests = new Map();
-        let readyResolve;
-        const readyPromise = new Promise(resolve => { readyResolve = resolve; });
-        
-        worker.onmessage = (e) => {
-          if (e.data.type === "ready") {
-            readyResolve();
-          } else {
-            const { id, result, error } = e.data;
-            if (pendingRequests.has(id)) {
-              const { resolve, reject } = pendingRequests.get(id);
-              pendingRequests.delete(id);
-              if (error) { reject(new Error(error)); }
-              else { resolve(result); }
-            }
-          }
-        };
-        
-        worker.onerror = (err) => { console.error("Worker encountered an error:", err); };
-        
-        await readyPromise;
-        
-        return function(...args) {
-          return new Promise((resolve, reject) => {
-            const id = requestId++;
-            pendingRequests.set(id, { resolve, reject });
-            worker.postMessage({ id, args });
-          });
-        };
-      }      
-
-      // -----------------App Launch-------------------------
-
-      const useInlineWorkerCode = true;
-      const workerCode = useInlineWorkerCode ? getInlineWorkerCode() : await (await fetch("worker.js")).text();
-      const createMandelbrotRenderer = async () => await createWorker(workerCode);
-      window.app = new App(MandelbrotExplorer, "app");
+        ready() { return this.call("ready"); }
+        startRenderer(args) { return this.call("startRenderer", args); }
+        nextFrame() { return this.call("nextFrame"); }
+      }
       
+      window.app = new App(MandelbrotExplorer, "app");      
       function getInlineWorkerCode() { return `
 /* ------------------------------------------------------------------------------------------
 * Algorithm adapted from Hastings Greer that allows 10^300 zoom depth; significant revisions:
 *     
-* - Calculates in low resolution before high resolution, enabling:
-*   - Creating a mask to skip unnecessary calculations
-*   - Animations with reduced resolution
+* - Progressive rendering, w/ low resolution previews & tiling
+* - Faster calculation heuristic by skipping calculation on probably costly pixels
+* - Animation friendly w/ lower resolution for in-between frames
 * - Works with fractional zoom levels, not only integer powers of two
 * - Works with any aspect ratio, automatically filling the available space
 * - Consistent colouring independent of max iterations
-* - Renders asynchronously on an OffscreenCanvas, so can be called as a web worker.
-* - Stateless render w/ cached lookups
+* - Renders asynchronously on an OffscreenCanvas & web worker enabled
+* - Stateless render w/ cached lookups & throttling
 */
 
 import { mat4 } from "https://cdn.skypack.dev/gl-matrix";
 import { init } from "https://cdn.skypack.dev/gmp-wasm";
 
-let binding = null; // Global variable for the MPFR binding.
+let binding = null; // Global MPFR binding
 
-export async function main() {  
-  ({ binding } = await init());  
-  return render;
-}  
+/* ------------------ Worker API ------------------ */
 
-/* ------------------ Utilities------------------ */
+class ApiWorker {
+  constructor() {
+    self.onmessage = async event => {
+      const { id, method, args } = event.data;
+      try {
+        const result = await this[method](args);
+        self.postMessage({ id, result });
+      } catch (e) {
+        self.postMessage({ id, error: e.message });
+      }
+    };
+    this.currentIterator = null;
+  }
+}
+
+class MandelbrotWorker extends ApiWorker {
+  constructor() { super(); this.startRenderer = takeLatest(this.startRenderer.bind(this)); }
+  async ready() { ({ binding } = await init()); }
+  async startRenderer(args) { this.currentIterator = progressiveRenderMandelbrot(args);}
+  async nextFrame() {
+    if (!this.currentIterator) throw new Error("Renderer not started");
+    return this.currentIterator.next();
+  }
+}
+
+new MandelbrotWorker();
+
+function takeLatest(fn) {
+  let latestCallId = 0;
+  return async function(...args) {
+    const callId = ++latestCallId;
+    const result = await fn(...args);
+    if (callId === latestCallId) { return result; }
+  };
+}
+
+/* ------------------ Utility Functions ------------------ */
 
 function uniforms(gl, program, definitions) {
   const uniformsMap = {};
@@ -677,28 +694,6 @@ function uniforms(gl, program, definitions) {
     }
   });
 }
-
-const getOrCreate = (() => {
-  const cache = new Map();
-  return (key, isCompatible, createNew) => {
-    const cachedObject = cache.get(key);
-    if (cachedObject && isCompatible(cachedObject)) {
-      return cachedObject;
-    }
-    const newObject = createNew();
-    cache.set(key, newObject);
-    return newObject;
-  };
-})();
-
-const getOrCreateOffscreenCanvas = (key, width, height) =>
-  getOrCreate (key,    
-    canvas => canvas.width === width && canvas.height === height,
-    () => new OffscreenCanvas(width, height)
-  );
-
-const getOrCreateFloat32Array = (key, length) =>
-  getOrCreate (key, o => o.length == length, () => new Float32Array(length));
 
 function loadShader(gl, type, source) {
   const shader = gl.createShader(type);
@@ -745,7 +740,7 @@ function drawPass(gl, framebuffer, width, height) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.viewport(0, 0, width, height);
   gl.clearColor(0.0, 0.0, 0.0, 1.0);
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);    
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   gl.finish();
@@ -765,7 +760,7 @@ function blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex) {
   gl.deleteTexture(finalTex);
 }
 
-/* ------------------ Mandelbrot Rendering  ------------------ */
+/* ------------------ Mandelbrot Rendering ------------------ */
 
 function getLayout(width, height) {
   const aspect = width / height;
@@ -774,95 +769,40 @@ function getLayout(width, height) {
   return { left: -right, right, top, bottom: -top };
 }
 
-function fetchWebGLResources(canvas) {
-  const resources = getOrCreate(
-    "resources",
-    resource => resource.canvas === canvas,
-    () => {
-      const gl = canvas.getContext("webgl2", {
-        antialias: false,
-        preserveDrawingBuffer: true
-      });
-      if (!gl) throw new Error("WebGL2 not supported.");
-
-      const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
-      gl.useProgram(shaderProgram);
-
-      const programInfo = {
-        program: shaderProgram,
-        attribLocations: {
-          vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
-        },
-        uniforms: uniforms(gl, shaderProgram, [
-          { name: "uProjectionMatrix", type: "Matrix4fv" },
-          { name: "uModelViewMatrix", type: "Matrix4fv" },
-          { name: "uState", type: "4f" },
-          { name: "uColorMax", type: "1f" },
-          { name: "uUseHeuristic", type: "1i" },
-          { name: "uMaskTestSeeSkippedPixels", type: "1i" },
-          { name: "uLowResMask", type: "1i" },
-          { name: "uFinalDim", type: "2f" },
-          { name: "poly1", type: "4f" },
-          { name: "poly2", type: "4f" },
-          { name: "sequence", type: "1i" },
-          { name: "uOrbitSize", type: "1i" }
-        ])
-      };
-
-      return { gl, programInfo, canvas };
-    }
-  );
-
-  const { gl, programInfo } = resources;
-
-  gl.viewport(0, 0, canvas.width, canvas.height);
-  const rect = getLayout(canvas.width, canvas.height);
-  const projectionMatrix = mat4.create();
-  mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
-  const modelViewMatrix = mat4.create();
-
-  gl.useProgram(programInfo.program);
-  programInfo.uniforms.uProjectionMatrix = projectionMatrix;
-  programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
-  const positionBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  const layout = [
-    rect.right, rect.top,
-    rect.left, rect.top,
-    rect.right, rect.bottom,
-    rect.left, rect.bottom
-  ];
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
-  resources.buffers = { position: positionBuffer };
-
-  return { ...resources, buffers: resources.buffers };
-}
-
 /* ------------------ Shader Sources ------------------ */
+
+// --- Vertex Shader ---
+// Updated to include uTileOffset and uTileScale and to output tileDelta.
 const vsSource = \`#version 300 es
 in vec4 aVertexPosition;
 uniform mat4 uModelViewMatrix;
 uniform mat4 uProjectionMatrix;
-out highp vec2 delta;
+uniform vec2 uTileOffset;  // Tile offset in fractal space.
+uniform vec2 uTileScale;   // Tile scale factor.
+out highp vec2 tileDelta;  // Transformed coordinate passed to fragment shader.
 void main() {
   gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
-  delta = vec2(aVertexPosition[0], aVertexPosition[1]);
+  // Map the vertex positions from local (tile) space into global fractal space.
+  tileDelta = (aVertexPosition.xy * uTileScale) + uTileOffset;
 }\`;
 
-const fsSource = \`\#version 300 es
+// --- Fragment Shader ---
+// Updated to use tileDelta and uFractalDomain for mask lookup.
+const fsSource = \`#version 300 es
 precision highp float;
 uniform int uOrbitSize;
-in highp vec2 delta;
+in highp vec2 tileDelta;
 out vec4 fragColor;
 uniform vec4 uState;
 uniform float uColorMax;
+//uniform int uColorAlgo;
 uniform bool uUseHeuristic;
 uniform bool uMaskTestSeeSkippedPixels;
 uniform sampler2D uLowResMask;
-uniform vec2 uFinalDim;
 uniform vec4 poly1;
 uniform vec4 poly2;
 uniform sampler2D sequence;
+uniform vec4 uFractalDomain;
 
 float get_orbit_x(int i) {
   i = i * 3;
@@ -882,7 +822,9 @@ float get_orbit_scale(int i) {
 
 void main() {
   if (uUseHeuristic) {
-    vec2 uv = gl_FragCoord.xy / uFinalDim;
+    // Compute normalized coordinates for the mask by mapping the global fractal coordinate.
+    vec2 uv = (tileDelta - vec2(uFractalDomain.x, uFractalDomain.y)) /
+              (vec2(uFractalDomain.z, uFractalDomain.w) - vec2(uFractalDomain.x, uFractalDomain.y));
     if (texture(uLowResMask, uv).r > 0.5) {
       fragColor = vec4(uMaskTestSeeSkippedPixels ? 1.0 : 0.0, 0.0, 0.0, 1.0);
       return;
@@ -892,8 +834,8 @@ void main() {
   float cq = q;
   q = q + poly2[3];
   float S = pow(2.0, q);
-  float dcx = delta[0];
-  float dcy = delta[1];
+  float dcx = tileDelta.x;
+  float dcy = tileDelta.y;
   float x;
   float y;
   float sqrx = (dcx * dcx - dcy * dcy);
@@ -907,8 +849,8 @@ void main() {
   for (int i = k; float(i) < uState[3]; i++) {
     j++; k++;
     float os = get_orbit_scale(k - 1);
-    dcx = delta[0] * pow(2.0, -q + cq - os);
-    dcy = delta[1] * pow(2.0, -q + cq - os);
+    dcx = tileDelta.x * pow(2.0, -q + cq - os);
+    dcy = tileDelta.y * pow(2.0, -q + cq - os);
     float unS = pow(2.0, q - os);
     if (isinf(unS)) unS = 0.0;
     float tx = 2.0 * x * dx - 2.0 * y * dy + unS * dx * dx - unS * dy * dy + dcx;
@@ -926,36 +868,35 @@ void main() {
       dy /= 2.0;
       q = q + 1.0;
       S = pow(2.0, q);
-      dcx = delta[0] * pow(2.0, -q + cq);
-      dcy = delta[1] * pow(2.0, -q + cq);
+      dcx = tileDelta.x * pow(2.0, -q + cq);
+      dcy = tileDelta.y * pow(2.0, -q + cq);
     }
     if ((fx * fx + fy * fy < S * S * dx * dx + S * S * dy * dy) || (x == -1.0 && y == -1.0)) {
       dx = fx;
       dy = fy;
       q = 0.0;
       S = pow(2.0, q);
-      dcx = delta[0] * pow(2.0, -q + cq);
-      dcy = delta[1] * pow(2.0, -q + cq);
+      dcx = tileDelta.x * pow(2.0, -q + cq);
+      dcy = tileDelta.y * pow(2.0, -q + cq);
       k = 0;
       x = get_orbit_x(0);
       y = get_orbit_y(0);
     }
   }
-  
-  // colouring step
-  
+
+  // coloring
   float iter = float(j);
   float maxIter = uState[3];
   float scaleFactor = uState[1];
   float normIter = (uColorMax - iter) / scaleFactor;
-                              
+
   fragColor = iter >= maxIter ?
     vec4(0.0, 0.0, 0.0, 1.0) :
     vec4(
-        (cos(normIter)          / -2.0) + 0.5,  // red
-        (cos(1.1214 * normIter) / -2.0) + 0.5,  // green
-        (cos(0.8 * normIter)    / -2.0) + 0.5,  // blue
-        1.0                                     // alpha
+        (cos(normIter)          / -2.0) + 0.5,
+        (cos(1.1214 * normIter) / -2.0) + 0.5,
+        (cos(0.8 * normIter)    / -2.0) + 0.5,
+        1.0
     );
 }\`;
 
@@ -1008,7 +949,7 @@ function floaty(d) {
 }
 
 function createReferenceOrbit(cx, cy, radius, iterations, orbitSize) {
-  const orbit = getOrCreateFloat32Array ("orbit", orbitSize * orbitSize); 
+  const orbit = getOrCreateFloat32Array("orbit", orbitSize * orbitSize); 
   orbit.fill(-1);
   let x = mpfr_zero(), y = mpfr_zero();    
   const txx = mpfr_zero(), txy = mpfr_zero(), tyy = mpfr_zero();
@@ -1061,31 +1002,103 @@ function createReferenceOrbit(cx, cy, radius, iterations, orbitSize) {
   return [orbit, poly, polylim];
 }
 
-/* creates a mask in low resolution of black pixels presumed not worth computing in higher resolution, as also presumed to be black */
-function createMask(gl, programInfo, resWidth, resHeight, settings)
-{    
-  const heuristicTex = createAndSetupTexture(gl, 3, resWidth, resHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
-  const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+function computeOrbitAndPoly(x, y, r, iterations, orbitSize) {
+  const center = [mpfr_zero(), mpfr_zero()];
+  const radius = mpfr_zero();
+  binding.mpfr_set_string(center[0], x, 10, 0);
+  binding.mpfr_set_string(center[1], y, 10, 0);
+  binding.mpfr_set_string(radius, r, 10, 0);
+  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], radius, iterations, orbitSize);
+  const rexp = binding.mpfr_get_exp(radius);
+  const r_val = binding.mpfr_get_d_2exp(0, radius, 0);
+  const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
+  const poly_scale = [1, -poly_scale_exp[1]];
+  const poly_scaled = [
+    mul(poly_scale, poly[0]),
+    mul(poly_scale, poly[1]),
+    mul(poly_scale, mul([r_val, rexp], poly[2])),
+    mul(poly_scale, mul([r_val, rexp], poly[3])),
+    mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
+    mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5]))),
+  ].map(floaty);
+  return { orbit, poly_scaled, polylim, poly_scale_exp, radius };
+}
 
-  programInfo.uniforms.uUseHeuristic = 0;
-  drawPass(gl, heuristicFbo, resWidth, resHeight);
-  const pixelBuffer = new Uint8Array(resWidth * resHeight * 4);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+function spiralOutFromCenter(flatArray) {
+  const n = Math.sqrt(flatArray.length);
+  const center = (n - 1) / 2;
+  const cells = flatArray.map((value, idx) => {
+    const i = Math.floor(idx / n);
+    const j = idx % n;
+    return { value, dist: Math.hypot(i - center, j - center) };
+  });
+  cells.sort((a, b) => a.dist - b.dist);
+  return cells.map(cell => cell.value);
+}
 
-  // readPixels is costly; crosses the JS/WebGL2 boundary. trade-off is render will be marginally slower on
-  // regions with few black pixels, but far faster on regions with many black pixels. tried pushing
-  // this into a WebGL2 shader, but ironically performance was actually worse
-  gl.readPixels(0, 0, resWidth, resHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const w = settings.foveaWidth, d = settings.foveaDetail;
-  const mask = new Uint8Array(resWidth * resHeight);
+function generateTileRects(width, height, tilesX, tilesY) {
+  const tiles = [];
+  const tileWidth = Math.floor(width / tilesX);
+  const tileHeight = Math.floor(height / tilesY);
+  for (let row = 0; row < tilesY; row++) {
+    const y = row * tileHeight;
+    for (let col = 0; col < tilesX; col++) {
+      const x = col * tileWidth;
+      const w = col === tilesX - 1 ? (width - x) : tileWidth;
+      const h = row === tilesY - 1 ? (height - y) : tileHeight;
+      tiles.push({ x, y, width: w, height: h });
+    }
+  }
+  return spiralOutFromCenter (tiles);
+}
 
-  for (let y = w; y < resHeight - w; y++) {
-    for (let x = w; x < resWidth - w; x++) {
+/**
+ * Computes the transformation for a tile by mapping its rectangle from canvas
+ * coordinates to the fractal domain and then to the target layout.
+ *
+ * @param {Object} tileRect - The tile rectangle in canvas coordinates {x, y, width, height}.
+ * @param {Object} canvasDims - The canvas dimensions {width, height}.
+ * @param {Object} fractalDomain - The fractal domain {left, bottom, right, top}.
+ * @param {Object} targetLayout - The target layout for rendering {left, bottom, right, top}.
+ * @returns {{offset: number[], scale: number[]}} The computed transform with offset and scale.
+ */
+function computeTileTransform(tileRect, canvasDims, fractalDomain, targetLayout) {
+  if (!tileRect) return { offset: [0, 0], scale: [1, 1] };
+
+  const normalizeRect = ({ x, y, width, height }) => ({
+    x: x / canvasDims.width,
+    y: (canvasDims.height - y - height) / canvasDims.height,
+    width: width / canvasDims.width,
+    height: height / canvasDims.height
+  });
+
+  const mapToFractalDomain = ({ x, y, width, height }) => ({
+    x: fractalDomain.left + x * (fractalDomain.right - fractalDomain.left),
+    y: fractalDomain.bottom + y * (fractalDomain.top - fractalDomain.bottom),
+    width: width * (fractalDomain.right - fractalDomain.left),
+    height: height * (fractalDomain.top - fractalDomain.bottom)
+  });
+
+  const normTile = normalizeRect(tileRect);
+  const tileFractal = mapToFractalDomain(normTile);
+
+  const scaleX = tileFractal.width / (targetLayout.right - targetLayout.left);
+  const scaleY = tileFractal.height / (targetLayout.top - targetLayout.bottom);
+  const offsetX = tileFractal.x - targetLayout.left * scaleX;
+  const offsetY = tileFractal.y - targetLayout.bottom * scaleY;
+
+  return { offset: [offsetX, offsetY], scale: [scaleX, scaleY] };
+}
+
+function computeMaskFromPixels(pixelBuffer, width, height, settings) {
+  const { foveaWidth: w, foveaDetail: d } = settings;
+  const mask = new Uint8Array(width * height);
+  for (let y = w; y < height - w; y++) {
+    for (let x = w; x < width - w; x++) {
       let allBlack = true;
       for (let j = -w; j <= w && allBlack; j += d) {
         for (let i = -w; i <= w; i += d) {
-          const idx = 4 * ((y + j) * resWidth + (x + i));
+          const idx = 4 * ((y + j) * width + (x + i));
           if (!(pixelBuffer[idx] === 0 &&
                 pixelBuffer[idx + 1] === 0 &&
                 pixelBuffer[idx + 2] === 0 &&
@@ -1095,39 +1108,240 @@ function createMask(gl, programInfo, resWidth, resHeight, settings)
           }
         }
       }
-      mask[y * resWidth + x] = allBlack ? 255 : 0;
+      mask[y * width + x] = allBlack ? 255 : 0;
     }
   }
-  gl.deleteFramebuffer(heuristicFbo);
-  gl.deleteTexture(heuristicTex);
-  return { mask, width: resWidth, height: resHeight };
+  return mask;
 }
 
-function renderScaledWithMask(gl, programInfo, canvas, scaleFactor) {        
-  // maskSettings: optimal blend of accuracy and performance
-  // set testSeeSkippedPixels to 1 to see effect
-  const maskSettings = { active: true, testSeeSkippedPixels: false, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
+const getOrCreateFloat32Array = (key, length) =>
+  getOrCreate(key, o => o.length == length, () => new Float32Array(length));
 
-  const targetWidth = Math.floor(canvas.width / scaleFactor);
-  const targetHeight = Math.floor(canvas.height / scaleFactor);
-  const maskWidth = Math.floor(targetWidth / maskSettings.scaleFactor);
-  const maskHeight = Math.floor(targetHeight / maskSettings.scaleFactor);
+const getOrCreate = (() => {
+  const cache = new Map();
+  return (key, isCompatible, createNew, cleanup) => {
+    const cachedObject = cache.get(key);
+    if (cachedObject && isCompatible(cachedObject)) {
+      return cachedObject;
+    }
+    if (cachedObject && cleanup) {
+      cleanup(cachedObject);
+    }
+    const newObject = createNew();
+    cache.set(key, newObject);
+    return newObject;
+  };
+})();
+
+const getOrCreateOffscreenCanvas = (key, width, height) =>
+  getOrCreate(
+    key,
+    canvas => canvas.width === width && canvas.height === height,
+    () => new OffscreenCanvas(width, height)    
+  );
+
+function cleanupWebGLResources(resource) {
+  const { gl, buffers, programInfo } = resource;
+  if (!gl) return;  
+  if (buffers) {
+    for (const key in buffers) {
+      gl.deleteBuffer(buffers[key]);
+    }
+  }  
+  if (programInfo && programInfo.program) {
+    gl.deleteProgram(programInfo.program);
+  }  
+  const ext = gl.getExtension("WEBGL_lose_context");
+  if (ext) {
+    ext.loseContext();
+  }
+}
+
+function fetchWebGLResources(canvas, canvasKey) {
+  const resourceKey = canvasKey + "_resources";
+  const resources = getOrCreate(
+    resourceKey,
+    resource => resource.canvas === canvas &&
+                resource.canvas.width === canvas.width &&
+                resource.canvas.height === canvas.height,
+    () => {
+      const gl = canvas.getContext("webgl2", {
+        antialias: false,
+        preserveDrawingBuffer: true
+      });
+      if (!gl) throw new Error("WebGL2 not supported.");
       
-  const { mask } = createMask(gl, programInfo, maskWidth, maskHeight, maskSettings);
-  createAndSetupTexture(gl, 2, maskWidth, maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, mask);
+      const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+      gl.useProgram(shaderProgram);
+      const programInfo = {
+        program: shaderProgram,
+        attribLocations: {
+          vertexPosition: gl.getAttribLocation(shaderProgram, "aVertexPosition")
+        },
+        uniforms: uniforms(gl, shaderProgram, [
+          { name: "uProjectionMatrix", type: "Matrix4fv" },
+          { name: "uModelViewMatrix", type: "Matrix4fv" },
+          { name: "uState", type: "4f" },
+          { name: "uColorMax", type: "1f" },
+          //{ name: "uColorAlgo", type: "1i" },
+          { name: "uUseHeuristic", type: "1i" },
+          { name: "uMaskTestSeeSkippedPixels", type: "1i" },
+          { name: "uLowResMask", type: "1i" },
+          { name: "poly1", type: "4f" },
+          { name: "poly2", type: "4f" },
+          { name: "sequence", type: "1i" },
+          { name: "uOrbitSize", type: "1i" },
+          { name: "uTileOffset", type: "2f" },
+          { name: "uTileScale", type: "2f" },
+          { name: "uFractalDomain", type: "4f" }
+        ])
+      };
 
-  const isLowRes = scaleFactor !== 1;
-  const finalTex = isLowRes ? createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE) : null;
-  const framebuffer = isLowRes ? createFramebufferForTexture(gl, finalTex) : null;
+      const buffers = {};
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      const rect = getLayout(canvas.width, canvas.height);
+      const projectionMatrix = mat4.create();
+      mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
+      const modelViewMatrix = mat4.create();
+
+      gl.useProgram(programInfo.program);
+      programInfo.uniforms.uProjectionMatrix = projectionMatrix;
+      programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
+      const positionBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      const layout = [
+        rect.right, rect.top,
+        rect.left, rect.top,
+        rect.right, rect.bottom,
+        rect.left, rect.bottom
+      ];
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(layout), gl.STATIC_DRAW);
+      buffers.position = positionBuffer;
+
+      return { gl, programInfo, canvas, buffers };
+    },
+    cleanupWebGLResources // Cleanup callback when replacing an old resource.
+  );
   
-  programInfo.uniforms.uUseHeuristic = maskSettings.active;
-  programInfo.uniforms.uMaskTestSeeSkippedPixels = maskSettings.testSeeSkippedPixels;
-  programInfo.uniforms.uLowResMask = 2;
-  programInfo.uniforms.uFinalDim = [targetWidth, targetHeight];     
-  drawPass(gl, framebuffer, targetWidth, targetHeight);
+  // Reapply viewport and projection in case the canvas was resized.
+  const { gl, programInfo } = resources;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  const rect = getLayout(canvas.width, canvas.height);
+  const projectionMatrix = mat4.create();
+  mat4.ortho(projectionMatrix, rect.left, rect.right, rect.bottom, rect.top, -1, 1);
+  const modelViewMatrix = mat4.create();
+  gl.useProgram(programInfo.program);
+  programInfo.uniforms.uProjectionMatrix = projectionMatrix;
+  programInfo.uniforms.uModelViewMatrix = modelViewMatrix;
+  
+  return resources;
+}
 
-  if (isLowRes) {
-    blit(gl, framebuffer, targetWidth, targetHeight, canvas, finalTex);
+/* renders a mask in low resolution of black pixels presumed not worth computing in higher resolution, as also presumed to be black */
+function renderMask(gl, scaleFactor, fullWidth, fullHeight, cachedObjects, updateUniforms) {  
+  // maskSettings: optimal blend of accuracy and performance
+  const maskSettings = { active: true, testSeeSkippedPixels: false, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
+  const effectiveScale = scaleFactor * maskSettings.scaleFactor;
+  const maskWidth = Math.floor(fullWidth / effectiveScale);
+  const maskHeight = Math.floor(fullHeight / effectiveScale);
+  
+  let cachedMask = cachedObjects.maskData; // caching is essential for tiling; we only need 1 mask computation for the full image
+  if (!cachedMask || cachedMask.maskWidth !== maskWidth || cachedMask.maskHeight !== maskHeight) {
+    const heuristicTex = createAndSetupTexture(gl, 3, maskWidth, maskHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE);
+    const heuristicFbo = createFramebufferForTexture(gl, heuristicTex);
+    
+    updateUniforms({ uUseHeuristic: 0 }); // the mask itself doesn't need/use the masking heuristic
+    drawPass(gl, heuristicFbo, maskWidth, maskHeight); // render a scaled down mandelbrot
+
+    const pixelBuffer = new Uint8Array(maskWidth * maskHeight * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, heuristicFbo);
+
+    // readPixels is costly; crosses the JS/WebGL2 boundary. trade-off is render will be marginally slower on
+    // regions with few black pixels, but far faster on regions with many black pixels. tried pushing
+    // this into a WebGL2 shader, but ironically performance was actually worse
+
+    const tComputationStart = performance.now();    
+    gl.readPixels(0, 0, maskWidth, maskHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixelBuffer);
+    const computationTime = performance.now() - tComputationStart;
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    const mask = computeMaskFromPixels(pixelBuffer, maskWidth, maskHeight, maskSettings);
+    gl.deleteFramebuffer(heuristicFbo);
+    gl.deleteTexture(heuristicTex);
+
+    cachedMask = { mask, maskWidth, maskHeight, computationTime };
+    cachedObjects.maskData = cachedMask;
+  }
+
+  // Upload the (cached) full image mask (computed at low resolution) to the GPU.
+  createAndSetupTexture(gl, 2, cachedMask.maskWidth, cachedMask.maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, cachedMask.mask);
+  updateUniforms({
+    uLowResMask: 2,
+    uUseHeuristic: maskSettings.active,
+    uMaskTestSeeSkippedPixels: maskSettings.testSeeSkippedPixels
+  });
+}
+
+function renderMandelbrot(args) {
+  const defaults = { lowRes: false, scaleFactor: 3, orbitSize: 1024, cachedObjects: {} };
+  args = { ...defaults, ...args };
+  const { width, height, tileRect } = args;
+  const finalRect = tileRect ?? { x: 0, y: 0, width, height };
+
+  const orbitData = args.cachedObjects.orbitData ||
+    (args.cachedObjects.orbitData = computeOrbitAndPoly(args.x, args.y, args.r, args.iterations, args.orbitSize));
+  
+  const canvasKey = tileRect ? "tileCanvas" : "mainCanvas";
+  const offscreenCanvas = getOrCreateOffscreenCanvas(canvasKey, finalRect.width, finalRect.height);
+  const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas, canvasKey);
+
+  gl.useProgram(programInfo.program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+  gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
+  gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+  createAndSetupTexture(gl, 0, args.orbitSize, args.orbitSize, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbitData.orbit));
+
+  const updateUniforms = (newUniforms) => Object.assign(programInfo.uniforms, newUniforms);
+
+  const fullLayout = getLayout(width, height);
+  const targetLayout = getLayout(finalRect.width, finalRect.height);
+  const transform = computeTileTransform(tileRect, { width, height }, fullLayout, targetLayout);
+
+  updateUniforms({
+    uFractalDomain: [fullLayout.left, fullLayout.bottom, fullLayout.right, fullLayout.top],
+    uTileOffset: transform.offset,
+    uTileScale: transform.scale,
+    uState: [0, args.colorScale, 1 + get_exp(orbitData.radius), args.iterations],
+    uColorMax: args.colorMax || args.iterations,
+    uColorAlgo: args.colorAlgo || 0,
+    poly1: orbitData.poly_scaled.slice(0, 4),
+    poly2: [orbitData.poly_scaled[4], orbitData.poly_scaled[5], orbitData.polylim, orbitData.poly_scale_exp[1]],
+    uOrbitSize: args.orbitSize
+  });
+
+  const effectiveScale = args.lowRes ? args.scaleFactor : 1;
+  const computeDimension = size => Math.floor(size / effectiveScale);
+  const targetWidth = computeDimension(finalRect.width);
+  const targetHeight = computeDimension(finalRect.height);
+
+  renderMask(gl, effectiveScale, width, height, args.cachedObjects, updateUniforms);
+
+  if (args.maskOnlyRender) {
+    return {cachedObjects: args.cachedObjects };
+  }
+  else {
+    const finalTex = !args.lowRes ? null : createAndSetupTexture(gl, 4, targetWidth, targetHeight, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE); 
+    const framebuffer = !args.lowRes ? null : createFramebufferForTexture(gl, finalTex);
+    gl.viewport(finalRect.x, finalRect.y, finalRect.width, finalRect.height);
+    drawPass(gl, framebuffer, targetWidth, targetHeight);
+    if (args.lowRes) {
+      blit(gl, framebuffer, targetWidth, targetHeight, offscreenCanvas, finalTex);
+      gl.deleteFramebuffer(framebuffer);
+      gl.deleteTexture(finalTex);
+    }
+    return { bitmap: offscreenCanvas.transferToImageBitmap(), cachedObjects: args.cachedObjects };
   }
 }
 
@@ -1139,60 +1353,49 @@ function renderScaledWithMask(gl, programInfo, canvas, scaleFactor) {
  * @param {string} args.x - The arbitrary precision x-coordinate of the Mandelbrot center as a string.
  * @param {string} args.y - The arbitrary precision y-coordinate of the Mandelbrot center as a string.
  * @param {string} args.r - The arbitrary precision radius/zoom magnification.
- * @param {number} args.iterations - Maximum iterations.
- * @param {number} args.colorChoice - Color map scale factor.
+ * @param {number} args.iterations - Maximum iterations. 
+ * @param {number} args.colorScale - Color map scale factor.
  * @param {number} args.colorMax - Fixed iteration count for coloring; defaults to iterations.
+ * @param {number} [args.colorAlgo=0] - Color algorithm. // todo.
  * @param {boolean} [args.lowRes=false] - Render in low resolution if true; full resolution if false.
  * @param {number} [args.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
  * @param {number} [args.orbitSize=1024] - The size of the orbit texture.
+ * @param {number} [args.forcePreview=false] - Whether to force a low resolution preview, even if performing quickly.
  * @returns {ImageBitmap}
  */
-function render(args) {
-  const defaults = { lowRes: false, scaleFactor: 3, orbitSize: 1024 };
-  args = { ...defaults, ...args };
-    
-  const center = [mpfr_zero(), mpfr_zero()];
-  const radius = mpfr_zero();
-    
-  binding.mpfr_set_string(center[0], args.x, 10, 0);
-  binding.mpfr_set_string(center[1], args.y, 10, 0);
-  binding.mpfr_set_string(radius, args.r, 10, 0);
-    
-  const [orbit, poly, polylim] = createReferenceOrbit(center[0], center[1], args.radius, args.iterations, args.orbitSize);
-    
-  const rexp = binding.mpfr_get_exp(radius);
-  const r_val = binding.mpfr_get_d_2exp(0, radius, 0);
-    
-  const poly_scale_exp = mul([1, 0], maxabs(poly[0], poly[1]));
-  const poly_scale = [1, -poly_scale_exp[1]];
-  const poly_scaled = [
-    mul(poly_scale, poly[0]),
-    mul(poly_scale, poly[1]),
-    mul(poly_scale, mul([r_val, rexp], poly[2])),
-    mul(poly_scale, mul([r_val, rexp], poly[3])),
-    mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[4]))),
-    mul(poly_scale, mul([r_val, rexp], mul([r_val, rexp], poly[5])))
-  ].map(floaty);
-    
-  const offscreenCanvas = getOrCreateOffscreenCanvas('mainRender', args.width, args.height);
-  const { gl, programInfo, buffers } = fetchWebGLResources(offscreenCanvas);
-  createAndSetupTexture(gl, 0, args.orbitSize, args.orbitSize, gl.R32F, gl.RED, gl.FLOAT, new Float32Array(orbit));    
-  gl.useProgram(programInfo.program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-  gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, 2, gl.FLOAT, false, 0, 0);
-  gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+async function* progressiveRenderMandelbrot(args) { 
+  
+  const { width, height, lowRes, forcePreview, scaleFactor = 3 } = args;  
+  const canvasRect = { x: 0, y: 0, width, height };    
+  // Render a low-res version first (which computes orbit and full image mask) to provide quick visual feedback.
+  const lowResResult = renderMandelbrot({ ...args, lowRes: true, scaleFactor });  
+  const progressCalc = imagesDone => lowRes ? 1 : Math.round(100 * (imagesDone / (scaleFactor * scaleFactor + 1))) / 100;
       
-  programInfo.uniforms.uState = [0, args.colorChoice, 1 + get_exp(radius), args.iterations];
-  programInfo.uniforms.uColorMax = args.colorMax || args.iterations;
-  programInfo.uniforms.poly1 = [poly_scaled[0], poly_scaled[1], poly_scaled[2], poly_scaled[3]];
-  programInfo.uniforms.poly2 = [poly_scaled[4], poly_scaled[5], polylim, poly_scale_exp[1]];
-  programInfo.uniforms.uOrbitSize = args.orbitSize;
-      
-  renderScaledWithMask(gl, programInfo, offscreenCanvas, !args.lowRes ? 1 : args.scaleFactor);
-      
-  return offscreenCanvas.transferToImageBitmap();
+  // technically we shouldn't hard code 20, it's dependent on maskSettings.scaleFactor^2 & analysis of mask pixels, but this is ok for now
+  if (!lowRes && lowResResult.computationTime < 20 && ! forcePreview) { 
+    // Fast enough – render final high-res version (reusing the cached full image mask)
+    const highResResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
+    yield { bitmap: highResResult.bitmap, sourceRect: canvasRect, destinationRect: canvasRect, progress: 1 };
+    return;
+  }
+
+  yield { bitmap: lowResResult.bitmap, sourceRect: canvasRect, destinationRect: canvasRect, progress: progressCalc(1) };
+  if (lowRes) return;  
+  
+  const maskOnlyResult = renderMandelbrot({ ...args, maskOnlyRender: true, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
+  // In high-res tiling, each tile reuses the cached full image mask computed during the low-res pass.
+  const tileRects = generateTileRects(width, height, scaleFactor, scaleFactor);
+  for (const tileInfo of tileRects) {    
+    const highResTileResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, tileRect: tileInfo, cachedObjects: maskOnlyResult.cachedObjects });
+    yield {
+      bitmap: highResTileResult.bitmap,
+      sourceRect: { x: 0, y: 0, width: tileInfo.width, height: tileInfo.height },
+      destinationRect: { x: tileInfo.x, y: tileInfo.y, width: tileInfo.width, height: tileInfo.height },
+      progress: progressCalc(tileRects.indexOf(tileInfo) + 2)
+    };
+  }
 }
-`;}
+`};    
     </script>
   </body>
 </html>
