@@ -491,8 +491,7 @@
           requestAnimationFrame(animateFrame);
         }
 
-        zoomOut() {
-          if (this.busy()) return;
+        zoomOut() {          
           if (!this.zoomAnimationsEnabled) {
             this.zoomStack = [];
           }
