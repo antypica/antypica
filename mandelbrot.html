@@ -1221,7 +1221,7 @@ function fetchWebGLResources(canvas, canvasKey) {
     cleanupWebGLResources // Cleanup callback when replacing an old resource.
   );
   
-  // Reapply viewport and projection in case the canvas was resized.
+  // Sizing
   const { gl, programInfo } = resources;
   gl.viewport(0, 0, canvas.width, canvas.height);
   const rect = getLayout(canvas.width, canvas.height);
@@ -1272,7 +1272,6 @@ function renderMask(gl, scaleFactor, fullWidth, fullHeight, cachedObjects, updat
     cachedObjects.maskData = cachedMask;
   }
 
-  // Upload the (cached) full image mask (computed at low resolution) to the GPU.
   createAndSetupTexture(gl, 2, cachedMask.maskWidth, cachedMask.maskHeight, gl.R8, gl.RED, gl.UNSIGNED_BYTE, cachedMask.mask);
   updateUniforms({
     uLowResMask: 2,
@@ -1320,9 +1319,8 @@ function renderMandelbrot(args) {
   });
 
   const effectiveScale = args.lowRes ? args.scaleFactor : 1;
-  const computeDimension = size => Math.floor(size / effectiveScale);
-  const targetWidth = computeDimension(finalRect.width);
-  const targetHeight = computeDimension(finalRect.height);
+  const targetWidth = Math.floor(finalRect.width / effectiveScale);
+  const targetHeight = Math.floor(finalRect.height / effectiveScale);
 
   renderMask(gl, effectiveScale, width, height, args.cachedObjects, updateUniforms);
 
@@ -1371,7 +1369,7 @@ async function* progressiveRenderMandelbrot(args) {
       
   // technically we shouldn't hard code 20, it's dependent on maskSettings.scaleFactor^2 & analysis of mask pixels, but this is ok for now
   if (!lowRes && lowResResult.computationTime < 20 && ! forcePreview) { 
-    // Fast enough – render final high-res version (reusing the cached full image mask)
+    // Fast enough - render final high-res version, no need to yield low res preview unless explicitly asked for
     const highResResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
     yield { bitmap: highResResult.bitmap, sourceRect: canvasRect, destinationRect: canvasRect, progress: 1 };
     return;
@@ -1381,7 +1379,7 @@ async function* progressiveRenderMandelbrot(args) {
   if (lowRes) return;  
   
   const maskOnlyResult = renderMandelbrot({ ...args, maskOnlyRender: true, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
-  // In high-res tiling, each tile reuses the cached full image mask computed during the low-res pass.
+  // Each tile reuses the cached full image mask computed by the mask only result
   const tileRects = generateTileRects(width, height, scaleFactor, scaleFactor);
   for (const tileInfo of tileRects) {    
     const highResTileResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, tileRect: tileInfo, cachedObjects: maskOnlyResult.cachedObjects });
@@ -1392,8 +1390,7 @@ async function* progressiveRenderMandelbrot(args) {
       progress: progressCalc(tileRects.indexOf(tileInfo) + 2)
     };
   }
-}
-`};    
+}`};    
     </script>
   </body>
 </html>
