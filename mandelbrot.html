@@ -1239,9 +1239,9 @@ function fetchWebGLResources(canvas, canvasKey) {
 function renderMask(gl, scaleFactor, fullWidth, fullHeight, cachedObjects, updateUniforms) {  
   // maskSettings: optimal blend of accuracy and performance
   const maskSettings = { active: true, testSeeSkippedPixels: false, scaleFactor: 3, foveaWidth: 3, foveaDetail: 1 };
-  const effectiveScale = scaleFactor * maskSettings.scaleFactor;
-  const maskWidth = Math.floor(fullWidth / effectiveScale);
-  const maskHeight = Math.floor(fullHeight / effectiveScale);
+  const appliedScale = scaleFactor * maskSettings.scaleFactor; // scale compounds
+  const maskWidth = Math.floor(fullWidth / appliedScale);
+  const maskHeight = Math.floor(fullHeight / appliedScale);
   
   let cachedMask = cachedObjects.maskData; // caching is essential for tiling; we only need 1 mask computation for the full image
   if (!cachedMask || cachedMask.maskWidth !== maskWidth || cachedMask.maskHeight !== maskHeight) {
@@ -1318,11 +1318,11 @@ function renderMandelbrot(args) {
     uOrbitSize: args.orbitSize
   });
 
-  const effectiveScale = args.lowRes ? args.scaleFactor : 1;
-  const targetWidth = Math.floor(finalRect.width / effectiveScale);
-  const targetHeight = Math.floor(finalRect.height / effectiveScale);
+  const appliedScale = args.lowRes ? args.scaleFactor : 1;
+  const targetWidth = Math.floor(finalRect.width / appliedScale);
+  const targetHeight = Math.floor(finalRect.height / appliedScale);
 
-  renderMask(gl, effectiveScale, width, height, args.cachedObjects, updateUniforms);
+  renderMask(gl, appliedScale, width, height, args.cachedObjects, updateUniforms);
 
   if (args.maskOnlyRender) {
     return {cachedObjects: args.cachedObjects };
@@ -1354,7 +1354,7 @@ function renderMandelbrot(args) {
  * @param {number} args.colorMax - Fixed iteration count for coloring; defaults to iterations.
  * @param {number} [args.colorAlgo=0] - Color algorithm. // todo.
  * @param {boolean} [args.lowRes=false] - Render in low resolution if true; full resolution if false.
- * @param {number} [args.scaleFactor=3] - Scale factor to use when rendering in low resolution. Ignored when lowRes is false.
+ * @param {number} [args.scaleFactor=3] - Scale factor to use when lowRes is true.
  * @param {number} [args.orbitSize=1024] - The size of the orbit texture.
  * @param {number} [args.forcePreview=false] - Whether to force a low resolution preview, even if performing quickly.
  * @returns {ImageBitmap}
@@ -1363,14 +1363,14 @@ async function* progressiveRenderMandelbrot(args) {
   
   const { width, height, lowRes, forcePreview, scaleFactor = 3 } = args;  
   const canvasRect = { x: 0, y: 0, width, height };    
-  // Render a low-res version first (which computes orbit and full image mask) to provide quick visual feedback.
-  const lowResResult = renderMandelbrot({ ...args, lowRes: true, scaleFactor });  
+  // Even if lowRes isn't selected, we render in lowRes first; performance is tested & early visual feedback may be yielded
+  const lowResResult = renderMandelbrot({ ...args, lowRes: true });  
   const progressCalc = imagesDone => lowRes ? 1 : Math.round(100 * (imagesDone / (scaleFactor * scaleFactor + 1))) / 100;
       
   // technically we shouldn't hard code 20, it's dependent on maskSettings.scaleFactor^2 & analysis of mask pixels, but this is ok for now
   if (!lowRes && lowResResult.computationTime < 20 && ! forcePreview) { 
-    // Fast enough - render final high-res version, no need to yield low res preview unless explicitly asked for
-    const highResResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
+    // Fast enough – render final high-res version, no need to yield low res preview unless explicitly asked for
+    const highResResult = renderMandelbrot({ ...args, lowRes: false, cachedObjects: lowResResult.cachedObjects });
     yield { bitmap: highResResult.bitmap, sourceRect: canvasRect, destinationRect: canvasRect, progress: 1 };
     return;
   }
@@ -1378,11 +1378,11 @@ async function* progressiveRenderMandelbrot(args) {
   yield { bitmap: lowResResult.bitmap, sourceRect: canvasRect, destinationRect: canvasRect, progress: progressCalc(1) };
   if (lowRes) return;  
   
-  const maskOnlyResult = renderMandelbrot({ ...args, maskOnlyRender: true, lowRes: false, scaleFactor: 1, cachedObjects: lowResResult.cachedObjects });
+  const maskOnlyResult = renderMandelbrot({ ...args, maskOnlyRender: true, lowRes: false, cachedObjects: lowResResult.cachedObjects });
   // Each tile reuses the cached full image mask computed by the mask only result
   const tileRects = generateTileRects(width, height, scaleFactor, scaleFactor);
   for (const tileInfo of tileRects) {    
-    const highResTileResult = renderMandelbrot({ ...args, lowRes: false, scaleFactor: 1, tileRect: tileInfo, cachedObjects: maskOnlyResult.cachedObjects });
+    const highResTileResult = renderMandelbrot({ ...args, lowRes: false, tileRect: tileInfo, cachedObjects: maskOnlyResult.cachedObjects });
     yield {
       bitmap: highResTileResult.bitmap,
       sourceRect: { x: 0, y: 0, width: tileInfo.width, height: tileInfo.height },
